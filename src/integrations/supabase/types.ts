@@ -38,6 +38,73 @@ export type Database = {
           },
         ]
       }
+      chat_history: {
+        Row: {
+          ai_response: string | null
+          contract_id: string
+          created_at: string | null
+          id: number
+          user_id: string
+          user_message: string | null
+        }
+        Insert: {
+          ai_response?: string | null
+          contract_id: string
+          created_at?: string | null
+          id?: number
+          user_id: string
+          user_message?: string | null
+        }
+        Update: {
+          ai_response?: string | null
+          contract_id?: string
+          created_at?: string | null
+          id?: number
+          user_id?: string
+          user_message?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "chat_history_contract_id_fkey"
+            columns: ["contract_id"]
+            isOneToOne: false
+            referencedRelation: "contracts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      contract_versions: {
+        Row: {
+          content_text: string
+          contract_id: string
+          created_at: string | null
+          id: number
+          version_number: number
+        }
+        Insert: {
+          content_text: string
+          contract_id: string
+          created_at?: string | null
+          id?: number
+          version_number: number
+        }
+        Update: {
+          content_text?: string
+          contract_id?: string
+          created_at?: string | null
+          id?: number
+          version_number?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "contract_versions_contract_id_fkey"
+            columns: ["contract_id"]
+            isOneToOne: false
+            referencedRelation: "contracts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       contracts: {
         Row: {
           created_at: string
@@ -75,18 +142,21 @@ export type Database = {
         Row: {
           created_at: string
           credits: number
+          plan_type: string
           updated_at: string
           user_id: string
         }
         Insert: {
           created_at?: string
           credits?: number
+          plan_type?: string
           updated_at?: string
           user_id: string
         }
         Update: {
           created_at?: string
           credits?: number
+          plan_type?: string
           updated_at?: string
           user_id?: string
         }

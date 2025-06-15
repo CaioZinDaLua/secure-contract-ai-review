@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
-import { Upload, FileText, Clock, CheckCircle, XCircle, Shield } from "lucide-react";
+import { Upload, FileText, Clock, CheckCircle, XCircle, Shield, Zap } from "lucide-react";
 
 interface Contract {
   id: string;
@@ -19,6 +19,7 @@ interface Contract {
 
 interface UserProfile {
   credits: number;
+  plan_type: string;
 }
 
 const Dashboard = () => {
@@ -44,7 +45,7 @@ const Dashboard = () => {
       // Fetch user profile
       const { data: profile, error: profileError } = await supabase
         .from('user_profiles')
-        .select('credits')
+        .select('credits, plan_type')
         .eq('user_id', user!.id)
         .single();
 
@@ -128,8 +129,27 @@ const Dashboard = () => {
 
       toast({
         title: "Upload realizado!",
-        description: "Seu contrato está sendo analisado por nossa IA. Isso pode levar até 2 minutos.",
+        description: "Iniciando análise do contrato por IA...",
       });
+
+      // Trigger analysis
+      const { error: analysisError } = await supabase.functions.invoke('analyze-contract', {
+        body: { contract_id: contractData.id }
+      });
+
+      if (analysisError) {
+        console.error('Error starting analysis:', analysisError);
+        toast({
+          title: "Erro na análise",
+          description: "Houve um problema ao iniciar a análise. Tente novamente.",
+          variant: "destructive",
+        });
+      } else {
+        toast({
+          title: "Análise iniciada!",
+          description: "Seu contrato está sendo analisado. Isso pode levar até 2 minutos.",
+        });
+      }
 
       // Refresh data
       fetchUserData();
@@ -182,7 +202,7 @@ const Dashboard = () => {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <div className="text-center">
-          <Shield className="h-12 w-12 text-primary mx-auto mb-4" />
+          <Shield className="h-12 w-12 text-primary mx-auto mb-4 animate-spin" />
           <p>Carregando...</p>
         </div>
       </div>
@@ -202,8 +222,16 @@ const Dashboard = () => {
               <h1 className="text-xl font-bold text-gray-900">Contrato Seguro</h1>
             </div>
             <div className="flex items-center space-x-4">
-              <div className="text-sm text-gray-600">
-                Análises restantes: <span className="font-bold text-primary">{userProfile?.credits || 0}</span>
+              <div className="flex items-center space-x-2">
+                {userProfile?.plan_type === 'pro' && (
+                  <div className="flex items-center bg-gradient-to-r from-yellow-400 to-orange-500 text-white px-3 py-1 rounded-full text-sm font-medium">
+                    <Zap className="h-4 w-4 mr-1" />
+                    PRO
+                  </div>
+                )}
+                <div className="text-sm text-gray-600">
+                  Análises restantes: <span className="font-bold text-primary">{userProfile?.credits || 0}</span>
+                </div>
               </div>
               <Button variant="outline" onClick={signOut}>
                 Sair
@@ -237,8 +265,11 @@ const Dashboard = () => {
                     className="cursor-pointer file:cursor-pointer"
                   />
                   {isUploading && (
-                    <div className="absolute inset-0 bg-white bg-opacity-75 flex items-center justify-center">
-                      <div className="text-sm text-gray-600">Uploading...</div>
+                    <div className="absolute inset-0 bg-white bg-opacity-75 flex items-center justify-center rounded">
+                      <div className="text-sm text-gray-600 flex items-center">
+                        <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-primary mr-2"></div>
+                        Analisando...
+                      </div>
                     </div>
                   )}
                 </div>
@@ -246,6 +277,13 @@ const Dashboard = () => {
                   <p className="text-sm text-red-600 mt-2">
                     Você precisa de créditos para analisar contratos.
                   </p>
+                )}
+                {userProfile?.plan_type !== 'pro' && (
+                  <div className="mt-4 p-3 bg-gradient-to-r from-yellow-50 to-orange-50 border border-yellow-200 rounded-lg">
+                    <p className="text-sm text-yellow-800 font-medium">
+                      💡 Upgrade para PRO e desbloqueie o chat com IA para seus contratos!
+                    </p>
+                  </div>
                 )}
               </CardContent>
             </Card>
@@ -272,7 +310,7 @@ const Dashboard = () => {
                     {contracts.map((contract) => (
                       <div
                         key={contract.id}
-                        className="flex items-center justify-between p-4 border rounded-lg hover:bg-gray-50 cursor-pointer"
+                        className="flex items-center justify-between p-4 border rounded-lg hover:bg-gray-50 cursor-pointer transition-colors"
                         onClick={() => {
                           if (contract.status === 'success') {
                             navigate(`/analise/${contract.id}`);
@@ -296,11 +334,16 @@ const Dashboard = () => {
                           </div>
                         </div>
                         <div className="text-right">
-                          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800">
+                          <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                            contract.status === 'success' ? 'bg-green-100 text-green-800' :
+                            contract.status === 'processing' ? 'bg-yellow-100 text-yellow-800' :
+                            contract.status === 'error' ? 'bg-red-100 text-red-800' :
+                            'bg-gray-100 text-gray-800'
+                          }`}>
                             {getStatusText(contract.status)}
                           </span>
                           {contract.status === 'success' && (
-                            <p className="text-xs text-gray-500 mt-1">Clique para ver</p>
+                            <p className="text-xs text-gray-500 mt-1">Clique para ver análise</p>
                           )}
                         </div>
                       </div>
