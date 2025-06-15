@@ -1,286 +1,317 @@
 
-import { useState } from "react";
-import { Button } from "@/components/ui/button";
+import { useState, useEffect } from "react";
+import { useAuth } from "@/hooks/useAuth";
+import { useNavigate } from "react-router-dom";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Progress } from "@/components/ui/progress";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
-import { Upload, FileText, Clock, Check, X, Shield } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
+import { supabase } from "@/integrations/supabase/client";
+import { Upload, FileText, Clock, CheckCircle, XCircle, Shield } from "lucide-react";
+
+interface Contract {
+  id: string;
+  file_name: string;
+  status: string;
+  created_at: string;
+  error_message?: string;
+}
+
+interface UserProfile {
+  credits: number;
+}
 
 const Dashboard = () => {
-  const [isDragging, setIsDragging] = useState(false);
-  const [credits, setCredits] = useState(3);
-  const [isUploading, setIsUploading] = useState(false);
+  const { user, signOut } = useAuth();
+  const navigate = useNavigate();
   const { toast } = useToast();
+  const [contracts, setContracts] = useState<Contract[]>([]);
+  const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
+  const [isUploading, setIsUploading] = useState(false);
+  const [loading, setLoading] = useState(true);
 
-  // Mock data para histórico
-  const [contracts] = useState([
-    {
-      id: "1",
-      fileName: "contrato_servicos_web.pdf",
-      status: "success" as const,
-      createdAt: "2024-01-15T10:30:00Z",
-    },
-    {
-      id: "2", 
-      fileName: "contrato_marketing_digital.pdf",
-      status: "processing" as const,
-      createdAt: "2024-01-14T14:20:00Z",
-    },
-    {
-      id: "3",
-      fileName: "contrato_consultoria.pdf", 
-      status: "error" as const,
-      createdAt: "2024-01-13T09:15:00Z",
+  useEffect(() => {
+    if (!user) {
+      navigate('/');
+      return;
     }
-  ]);
+    
+    fetchUserData();
+  }, [user, navigate]);
 
-  const handleFileUpload = async (file: File) => {
-    if (credits <= 0) {
+  const fetchUserData = async () => {
+    try {
+      // Fetch user profile
+      const { data: profile, error: profileError } = await supabase
+        .from('user_profiles')
+        .select('credits')
+        .eq('user_id', user!.id)
+        .single();
+
+      if (profileError) {
+        console.error('Error fetching profile:', profileError);
+      } else {
+        setUserProfile(profile);
+      }
+
+      // Fetch contracts
+      const { data: contractsData, error: contractsError } = await supabase
+        .from('contracts')
+        .select('id, file_name, status, created_at, error_message')
+        .eq('user_id', user!.id)
+        .order('created_at', { ascending: false });
+
+      if (contractsError) {
+        console.error('Error fetching contracts:', contractsError);
+      } else {
+        setContracts(contractsData || []);
+      }
+    } catch (error) {
+      console.error('Error fetching user data:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    // Check if user has credits
+    if (!userProfile || userProfile.credits <= 0) {
       toast({
         title: "Créditos insuficientes",
-        description: "Você precisa de mais créditos para continuar.",
+        description: "Você precisa de mais créditos para analisar contratos.",
         variant: "destructive",
       });
       return;
     }
 
-    if (!file.type.includes('pdf')) {
+    // Check file type
+    if (!file.type.includes('pdf') && !file.type.includes('text')) {
       toast({
-        title: "Formato inválido",
-        description: "Apenas arquivos PDF são aceitos.",
+        title: "Tipo de arquivo inválido",
+        description: "Apenas arquivos PDF e TXT são suportados.",
         variant: "destructive",
       });
       return;
     }
 
     setIsUploading(true);
-    
-    // Simular upload e processamento
-    setTimeout(() => {
-      setIsUploading(false);
-      setCredits(prev => prev - 1);
+
+    try {
+      // Upload file to Supabase Storage
+      const filePath = `${user!.id}/${Date.now()}_${file.name}`;
+      const { data: uploadData, error: uploadError } = await supabase.storage
+        .from('contract-uploads')
+        .upload(filePath, file);
+
+      if (uploadError) {
+        throw uploadError;
+      }
+
+      // Insert contract record
+      const { data: contractData, error: contractError } = await supabase
+        .from('contracts')
+        .insert({
+          user_id: user!.id,
+          file_name: file.name,
+          file_path: filePath,
+          status: 'pending'
+        })
+        .select()
+        .single();
+
+      if (contractError) {
+        throw contractError;
+      }
+
       toast({
         title: "Upload realizado!",
-        description: "Seu contrato está sendo analisado. Avisaremos quando estiver pronto.",
+        description: "Seu contrato está sendo analisado por nossa IA. Isso pode levar até 2 minutos.",
       });
-    }, 2000);
-  };
 
-  const handleDrop = (e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDragging(false);
-    
-    const files = Array.from(e.dataTransfer.files);
-    if (files[0]) {
-      handleFileUpload(files[0]);
-    }
-  };
+      // Refresh data
+      fetchUserData();
 
-  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(e.target.files || []);
-    if (files[0]) {
-      handleFileUpload(files[0]);
+      // Clear input
+      event.target.value = '';
+
+    } catch (error: any) {
+      console.error('Upload error:', error);
+      toast({
+        title: "Erro no upload",
+        description: error.message || "Erro ao fazer upload do arquivo.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsUploading(false);
     }
   };
 
   const getStatusIcon = (status: string) => {
     switch (status) {
-      case 'success':
-        return <Check className="w-4 h-4 text-green-600" />;
+      case 'pending':
       case 'processing':
-        return <Clock className="w-4 h-4 text-yellow-600" />;
+        return <Clock className="h-5 w-5 text-yellow-500" />;
+      case 'success':
+        return <CheckCircle className="h-5 w-5 text-green-500" />;
       case 'error':
-        return <X className="w-4 h-4 text-red-600" />;
+        return <XCircle className="h-5 w-5 text-red-500" />;
       default:
-        return <FileText className="w-4 h-4 text-gray-600" />;
+        return <FileText className="h-5 w-5 text-gray-500" />;
     }
   };
 
-  const getStatusBadge = (status: string) => {
+  const getStatusText = (status: string) => {
     switch (status) {
-      case 'success':
-        return <Badge className="bg-green-100 text-green-800 border-green-200">Concluído</Badge>;
+      case 'pending':
+        return 'Aguardando';
       case 'processing':
-        return <Badge className="bg-yellow-100 text-yellow-800 border-yellow-200">Processando</Badge>;
+        return 'Analisando';
+      case 'success':
+        return 'Concluído';
       case 'error':
-        return <Badge className="bg-red-100 text-red-800 border-red-200">Erro</Badge>;
+        return 'Erro';
       default:
-        return <Badge variant="secondary">Pendente</Badge>;
+        return status;
     }
   };
 
-  const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleDateString('pt-BR', {
-      day: '2-digit',
-      month: '2-digit',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-    });
-  };
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="text-center">
+          <Shield className="h-12 w-12 text-primary mx-auto mb-4" />
+          <p>Carregando...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100">
       {/* Header */}
-      <header className="bg-white shadow-sm border-b">
+      <div className="bg-white shadow-sm border-b">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex justify-between items-center h-16">
+          <div className="flex justify-between items-center py-4">
             <div className="flex items-center">
-              <div className="flex items-center">
-                <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center mr-3">
-                  <span className="text-white font-bold text-sm">CS</span>
-                </div>
-                <h1 className="text-xl font-bold text-gray-900">Contrato Seguro</h1>
+              <div className="inline-flex items-center justify-center w-10 h-10 bg-primary rounded-lg mr-3">
+                <span className="text-lg font-bold text-white">CS</span>
               </div>
+              <h1 className="text-xl font-bold text-gray-900">Contrato Seguro</h1>
             </div>
-            
             <div className="flex items-center space-x-4">
-              <div className="flex items-center space-x-2">
-                <Shield className="w-5 h-5 text-accent" />
-                <span className="text-sm font-medium text-gray-700">
-                  Análises restantes: <span className="text-primary font-bold">{credits}</span>
-                </span>
+              <div className="text-sm text-gray-600">
+                Análises restantes: <span className="font-bold text-primary">{userProfile?.credits || 0}</span>
               </div>
-              <Button variant="outline" size="sm">
+              <Button variant="outline" onClick={signOut}>
                 Sair
               </Button>
             </div>
           </div>
         </div>
-      </header>
+      </div>
 
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
           {/* Upload Area */}
           <div className="lg:col-span-1">
             <Card className="border-2 border-dashed border-gray-300 hover:border-primary transition-colors">
               <CardHeader className="text-center">
-                <CardTitle className="flex items-center justify-center space-x-2">
-                  <Upload className="w-5 h-5" />
-                  <span>Upload de Contrato</span>
+                <CardTitle className="flex items-center justify-center">
+                  <Upload className="h-6 w-6 mr-2" />
+                  Analisar Contrato
                 </CardTitle>
                 <CardDescription>
-                  Envie seu contrato em PDF para análise automatizada
+                  Arraste seu contrato (.pdf ou .txt) aqui ou clique para selecionar
                 </CardDescription>
               </CardHeader>
               <CardContent>
-                {!isUploading ? (
-                  <div
-                    className={`border-2 border-dashed rounded-lg p-8 text-center transition-colors ${
-                      isDragging ? 'border-primary bg-blue-50' : 'border-gray-300'
-                    }`}
-                    onDrop={handleDrop}
-                    onDragOver={(e) => e.preventDefault()}
-                    onDragEnter={() => setIsDragging(true)}
-                    onDragLeave={() => setIsDragging(false)}
-                  >
-                    <FileText className="w-12 h-12 text-gray-400 mx-auto mb-4" />
-                    <p className="text-gray-600 mb-4">
-                      Arraste seu contrato (.pdf) aqui ou clique para selecionar
-                    </p>
-                    <input
-                      type="file"
-                      accept=".pdf"
-                      onChange={handleFileSelect}
-                      className="hidden"
-                      id="file-upload"
-                    />
-                    <label htmlFor="file-upload">
-                      <Button className="gradient-primary border-0" asChild>
-                        <span>Selecionar arquivo</span>
-                      </Button>
-                    </label>
-                  </div>
-                ) : (
-                  <div className="text-center py-8">
-                    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto mb-4"></div>
-                    <p className="text-gray-600 mb-2">Enviando contrato...</p>
-                    <Progress value={75} className="w-full" />
-                  </div>
+                <div className="relative">
+                  <Input
+                    type="file"
+                    accept=".pdf,.txt"
+                    onChange={handleFileUpload}
+                    disabled={isUploading || !userProfile || userProfile.credits <= 0}
+                    className="cursor-pointer file:cursor-pointer"
+                  />
+                  {isUploading && (
+                    <div className="absolute inset-0 bg-white bg-opacity-75 flex items-center justify-center">
+                      <div className="text-sm text-gray-600">Uploading...</div>
+                    </div>
+                  )}
+                </div>
+                {(!userProfile || userProfile.credits <= 0) && (
+                  <p className="text-sm text-red-600 mt-2">
+                    Você precisa de créditos para analisar contratos.
+                  </p>
                 )}
               </CardContent>
             </Card>
           </div>
 
-          {/* Histórico de Análises */}
+          {/* Contracts History */}
           <div className="lg:col-span-2">
             <Card>
               <CardHeader>
                 <CardTitle>Histórico de Análises</CardTitle>
                 <CardDescription>
-                  Seus contratos analisados recentemente
+                  Seus contratos analisados e em andamento
                 </CardDescription>
               </CardHeader>
               <CardContent>
-                <div className="space-y-4">
-                  {contracts.map((contract) => (
-                    <div
-                      key={contract.id}
-                      className="flex items-center justify-between p-4 border rounded-lg hover:bg-gray-50 transition-colors cursor-pointer"
-                      onClick={() => window.location.href = `/analise/${contract.id}`}
-                    >
-                      <div className="flex items-center space-x-3">
-                        {getStatusIcon(contract.status)}
-                        <div>
-                          <h3 className="font-medium text-gray-900">
-                            {contract.fileName}
-                          </h3>
-                          <p className="text-sm text-gray-500">
-                            {formatDate(contract.createdAt)}
-                          </p>
+                {contracts.length === 0 ? (
+                  <div className="text-center py-8 text-gray-500">
+                    <FileText className="h-12 w-12 mx-auto mb-4 text-gray-300" />
+                    <p>Nenhum contrato analisado ainda.</p>
+                    <p className="text-sm">Faça upload do seu primeiro contrato para começar!</p>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    {contracts.map((contract) => (
+                      <div
+                        key={contract.id}
+                        className="flex items-center justify-between p-4 border rounded-lg hover:bg-gray-50 cursor-pointer"
+                        onClick={() => {
+                          if (contract.status === 'success') {
+                            navigate(`/analise/${contract.id}`);
+                          }
+                        }}
+                      >
+                        <div className="flex items-center space-x-3">
+                          {getStatusIcon(contract.status)}
+                          <div>
+                            <p className="font-medium text-gray-900">{contract.file_name}</p>
+                            <p className="text-sm text-gray-500">
+                              {new Date(contract.created_at).toLocaleDateString('pt-BR')} às{' '}
+                              {new Date(contract.created_at).toLocaleTimeString('pt-BR', {
+                                hour: '2-digit',
+                                minute: '2-digit'
+                              })}
+                            </p>
+                            {contract.error_message && (
+                              <p className="text-sm text-red-600">{contract.error_message}</p>
+                            )}
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800">
+                            {getStatusText(contract.status)}
+                          </span>
+                          {contract.status === 'success' && (
+                            <p className="text-xs text-gray-500 mt-1">Clique para ver</p>
+                          )}
                         </div>
                       </div>
-                      <div className="flex items-center space-x-3">
-                        {getStatusBadge(contract.status)}
-                        <Button variant="ghost" size="sm">
-                          Ver análise
-                        </Button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
+                    ))}
+                  </div>
+                )}
               </CardContent>
             </Card>
           </div>
         </div>
-
-        {/* Informações adicionais */}
-        <div className="mt-8 grid grid-cols-1 md:grid-cols-3 gap-6">
-          <Card>
-            <CardHeader className="text-center">
-              <CardTitle className="text-lg">🤖 IA Especializada</CardTitle>
-            </CardHeader>
-            <CardContent className="text-center">
-              <p className="text-sm text-gray-600">
-                Nossa IA é especializada em legislação brasileira e contratos de prestação de serviço
-              </p>
-            </CardContent>
-          </Card>
-          
-          <Card>
-            <CardHeader className="text-center">
-              <CardTitle className="text-lg">⚡ Análise Rápida</CardTitle>
-            </CardHeader>
-            <CardContent className="text-center">
-              <p className="text-sm text-gray-600">
-                Resultados em até 2 minutos, destacando pontos críticos jurídicos e financeiros
-              </p>
-            </CardContent>
-          </Card>
-          
-          <Card>
-            <CardHeader className="text-center">
-              <CardTitle className="text-lg">🔒 100% Seguro</CardTitle>
-            </CardHeader>
-            <CardContent className="text-center">
-              <p className="text-sm text-gray-600">
-                Seus documentos são processados com total confidencialidade e segurança
-              </p>
-            </CardContent>
-          </Card>
-        </div>
-      </main>
+      </div>
     </div>
   );
 };

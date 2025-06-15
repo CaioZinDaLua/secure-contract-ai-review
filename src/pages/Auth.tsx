@@ -6,23 +6,75 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
+import { useAuth } from "@/hooks/useAuth";
+import { useNavigate } from "react-router-dom";
+import { useEffect } from "react";
 
 const Auth = () => {
   const [isLoading, setIsLoading] = useState(false);
   const { toast } = useToast();
+  const { signIn, signUp, user } = useAuth();
+  const navigate = useNavigate();
 
-  const handleAuth = async (e: React.FormEvent, type: 'login' | 'signup') => {
+  // Redirect if already logged in
+  useEffect(() => {
+    if (user) {
+      navigate('/dashboard');
+    }
+  }, [user, navigate]);
+
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
     
-    // Simular autenticação até conectar com Supabase
-    setTimeout(() => {
-      setIsLoading(false);
+    const formData = new FormData(e.target as HTMLFormElement);
+    const email = formData.get('email') as string;
+    const password = formData.get('password') as string;
+
+    const { error } = await signIn(email, password);
+    
+    if (error) {
       toast({
-        title: type === 'login' ? "Login realizado!" : "Conta criada!",
-        description: "Conecte o Supabase para funcionalidade completa.",
+        title: "Erro no login",
+        description: error.message,
+        variant: "destructive",
       });
-    }, 1500);
+    } else {
+      toast({
+        title: "Login realizado!",
+        description: "Bem-vindo ao Contrato Seguro",
+      });
+      navigate('/dashboard');
+    }
+    
+    setIsLoading(false);
+  };
+
+  const handleSignup = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsLoading(true);
+    
+    const formData = new FormData(e.target as HTMLFormElement);
+    const email = formData.get('signup-email') as string;
+    const password = formData.get('signup-password') as string;
+    const fullName = formData.get('name') as string;
+
+    const { error } = await signUp(email, password, fullName);
+    
+    if (error) {
+      toast({
+        title: "Erro no cadastro",
+        description: error.message,
+        variant: "destructive",
+      });
+    } else {
+      toast({
+        title: "Conta criada!",
+        description: "Verifique seu email para confirmar a conta.",
+      });
+    }
+    
+    setIsLoading(false);
   };
 
   return (
@@ -51,11 +103,12 @@ const Auth = () => {
               </TabsList>
               
               <TabsContent value="login" className="space-y-4 mt-6">
-                <form onSubmit={(e) => handleAuth(e, 'login')} className="space-y-4">
+                <form onSubmit={handleLogin} className="space-y-4">
                   <div className="space-y-2">
                     <Label htmlFor="email">Email</Label>
                     <Input
                       id="email"
+                      name="email"
                       type="email"
                       placeholder="seu@email.com"
                       required
@@ -65,6 +118,7 @@ const Auth = () => {
                     <Label htmlFor="password">Senha</Label>
                     <Input
                       id="password"
+                      name="password"
                       type="password"
                       placeholder="••••••••"
                       required
@@ -81,11 +135,12 @@ const Auth = () => {
               </TabsContent>
               
               <TabsContent value="signup" className="space-y-4 mt-6">
-                <form onSubmit={(e) => handleAuth(e, 'signup')} className="space-y-4">
+                <form onSubmit={handleSignup} className="space-y-4">
                   <div className="space-y-2">
                     <Label htmlFor="name">Nome completo</Label>
                     <Input
                       id="name"
+                      name="name"
                       type="text"
                       placeholder="Seu nome"
                       required
@@ -95,6 +150,7 @@ const Auth = () => {
                     <Label htmlFor="signup-email">Email</Label>
                     <Input
                       id="signup-email"
+                      name="signup-email"
                       type="email"
                       placeholder="seu@email.com"
                       required
@@ -104,6 +160,7 @@ const Auth = () => {
                     <Label htmlFor="signup-password">Senha</Label>
                     <Input
                       id="signup-password"
+                      name="signup-password"
                       type="password"
                       placeholder="••••••••"
                       required
