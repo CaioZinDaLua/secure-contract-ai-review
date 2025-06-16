@@ -70,7 +70,7 @@ serve(async (req) => {
               name: "Contrato Seguro PRO",
               description: "Acesso completo ao chat com IA e funcionalidades avançadas"
             },
-            unit_amount: 4990, // R$ 49,90
+            unit_amount: 2790, // R$ 27,90
             recurring: {
               interval: "month"
             }

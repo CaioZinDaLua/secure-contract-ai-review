@@ -84,7 +84,7 @@ const UpgradeModal = ({ trigger }: UpgradeModalProps) => {
                   PLANO PRO
                 </Badge>
               </div>
-              <CardTitle className="text-3xl font-bold">R$ 49,90</CardTitle>
+              <CardTitle className="text-3xl font-bold">R$ 27,90</CardTitle>
               <CardDescription className="text-lg">por mês</CardDescription>
             </CardHeader>
             <CardContent>

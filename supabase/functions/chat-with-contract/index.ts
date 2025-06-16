@@ -72,15 +72,7 @@ Deno.serve(async (req) => {
     const { data: { user } } = await supabaseAdmin.auth.getUser(jwt);
     if (!user) throw new Error("Usuário não autenticado.");
 
-    // Verificação de Plano PRO
-    const { data: profile, error: profileError } = await supabaseAdmin
-        .from('user_profiles')
-        .select('plan_type')
-        .eq('user_id', user.id)
-        .single();
-    if (profileError || profile.plan_type !== 'pro') {
-        throw new Error("Acesso negado. Esta funcionalidade é exclusiva para assinantes PRO.");
-    }
+    // Removida a verificação de plano PRO - agora todos podem usar o chat
 
     // Coleta de Contexto
     // Análise inicial

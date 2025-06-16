@@ -130,15 +130,6 @@ const ContractAnalysis = () => {
   const sendMessage = async () => {
     if (!newMessage.trim() || isSending) return;
 
-    if (userProfile?.plan_type !== 'pro') {
-      toast({
-        title: "Upgrade necessário",
-        description: "O chat com IA é exclusivo para usuários PRO.",
-        variant: "destructive",
-      });
-      return;
-    }
-
     setIsSending(true);
     const messageToSend = newMessage.trim();
     setNewMessage("");
@@ -240,9 +231,6 @@ const ContractAnalysis = () => {
             <TabsTrigger value="chat" className="flex items-center">
               <MessageCircle className="h-4 w-4 mr-2" />
               Chat com IA
-              {userProfile?.plan_type !== 'pro' && (
-                <Zap className="h-3 w-3 ml-1 text-yellow-500" />
-              )}
             </TabsTrigger>
           </TabsList>
 
@@ -265,91 +253,72 @@ const ContractAnalysis = () => {
           </TabsContent>
 
           <TabsContent value="chat">
-            {userProfile?.plan_type !== 'pro' ? (
-              <Card>
+            <div className="space-y-6">
+              {/* Chat History */}
+              <Card className="max-h-96 overflow-y-auto">
                 <CardHeader>
-                  <CardTitle className="flex items-center">
-                    <Zap className="h-5 w-5 mr-2 text-yellow-500" />
-                    Chat com IA - Plano PRO
-                  </CardTitle>
+                  <CardTitle>Conversa com a IA</CardTitle>
                   <CardDescription>
-                    Upgrade para PRO e converse com a IA sobre seu contrato
+                    Agora disponível para todos os usuários! Faça perguntas sobre seu contrato.
                   </CardDescription>
                 </CardHeader>
-                <CardContent className="text-center py-8">
-                  <p className="text-gray-600 mb-4">
-                    O chat com IA permite fazer perguntas específicas sobre seu contrato e até mesmo solicitar correções automáticas.
-                  </p>
-                  <Button className="bg-gradient-to-r from-yellow-400 to-orange-500 hover:from-yellow-500 hover:to-orange-600">
-                    Upgrade para PRO
-                  </Button>
+                <CardContent className="space-y-4">
+                  {chatHistory.length === 0 ? (
+                    <p className="text-gray-500 text-center py-4">
+                      Nenhuma conversa ainda. Faça sua primeira pergunta!
+                    </p>
+                  ) : (
+                    chatHistory.map((message) => (
+                      <div key={message.id} className="space-y-2">
+                        <div className="bg-blue-50 rounded-lg p-3">
+                          <p className="font-medium text-blue-900">Você:</p>
+                          <p className="text-blue-800">{message.user_message}</p>
+                        </div>
+                        <div className="bg-gray-50 rounded-lg p-3">
+                          <p className="font-medium text-gray-900">IA:</p>
+                          <p className="text-gray-800 whitespace-pre-wrap">{message.ai_response}</p>
+                        </div>
+                      </div>
+                    ))
+                  )}
                 </CardContent>
               </Card>
-            ) : (
-              <div className="space-y-6">
-                {/* Chat History */}
-                <Card className="max-h-96 overflow-y-auto">
-                  <CardHeader>
-                    <CardTitle>Conversa com a IA</CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-4">
-                    {chatHistory.length === 0 ? (
-                      <p className="text-gray-500 text-center py-4">
-                        Nenhuma conversa ainda. Faça sua primeira pergunta!
-                      </p>
-                    ) : (
-                      chatHistory.map((message) => (
-                        <div key={message.id} className="space-y-2">
-                          <div className="bg-blue-50 rounded-lg p-3">
-                            <p className="font-medium text-blue-900">Você:</p>
-                            <p className="text-blue-800">{message.user_message}</p>
-                          </div>
-                          <div className="bg-gray-50 rounded-lg p-3">
-                            <p className="font-medium text-gray-900">IA:</p>
-                            <p className="text-gray-800 whitespace-pre-wrap">{message.ai_response}</p>
-                          </div>
-                        </div>
-                      ))
-                    )}
-                  </CardContent>
-                </Card>
 
-                {/* Message Input */}
-                <Card>
-                  <CardContent className="pt-6">
-                    <div className="flex space-x-2">
-                      <Textarea
-                        placeholder="Faça uma pergunta sobre o contrato ou solicite uma correção..."
-                        value={newMessage}
-                        onChange={(e) => setNewMessage(e.target.value)}
-                        disabled={isSending}
-                        className="min-h-[80px]"
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter' && !e.shiftKey) {
-                            e.preventDefault();
-                            sendMessage();
-                          }
-                        }}
-                      />
-                      <Button
-                        onClick={sendMessage}
-                        disabled={!newMessage.trim() || isSending}
-                        className="self-end"
-                      >
-                        {isSending ? (
-                          <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
-                        ) : (
-                          <Send className="h-4 w-4" />
-                        )}
-                      </Button>
-                    </div>
-                    <p className="text-xs text-gray-500 mt-2">
-                      Pressione Enter para enviar, Shift+Enter para nova linha
-                    </p>
-                  </CardContent>
-                </Card>
-              </div>
-            )}
+              {/* Message Input */}
+              <Card>
+                <CardContent className="pt-6">
+                  <div className="flex space-x-2">
+                    <Textarea
+                      placeholder="Faça uma pergunta sobre o contrato ou solicite uma correção..."
+                      value={newMessage}
+                      onChange={(e) => setNewMessage(e.target.value)}
+                      disabled={isSending}
+                      className="min-h-[80px]"
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && !e.shiftKey) {
+                          e.preventDefault();
+                          sendMessage();
+                        }
+                      }}
+                    />
+                    <Button
+                      onClick={sendMessage}
+                      disabled={!newMessage.trim() || isSending}
+                      className="self-end"
+                    >
+                      {isSending ? (
+                        <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                      ) : (
+                        <Send className="h-4 w-4" />
+                      )}
+                    </Button>
+                  </div>
+                  <p className="text-xs text-gray-500 mt-2">
+                    Pressione Enter para enviar, Shift+Enter para nova linha
+                  </p>
+                </CardContent>
+              </Card>
+            </div>
           </TabsContent>
         </Tabs>
       </div>
