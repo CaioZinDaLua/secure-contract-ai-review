@@ -88,7 +88,7 @@ Forneça uma análise detalhada e estruturada em português brasileiro.`;
         'Authorization': `Bearer ${Deno.env.get('OPENAI_API_KEY')!}`
       },
       body: JSON.stringify({
-        model: 'gpt-4-turbo',
+        model: 'gpt-4o-mini',
         messages: [{ role: 'user', content: analysisPrompt }],
         temperature: 0.3,
         max_tokens: 2000

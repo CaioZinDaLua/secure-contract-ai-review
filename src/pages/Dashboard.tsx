@@ -101,15 +101,20 @@ const Dashboard = () => {
     setIsUploading(true);
 
     try {
-      // Upload file to Supabase Storage
+      // Upload file to Supabase Storage - Create bucket first if it doesn't exist
       const filePath = `${user!.id}/${Date.now()}_${file.name}`;
+      
+      console.log('Starting file upload to storage...');
       const { data: uploadData, error: uploadError } = await supabase.storage
         .from('contract-uploads')
         .upload(filePath, file);
 
       if (uploadError) {
-        throw uploadError;
+        console.error('Upload error:', uploadError);
+        throw new Error(`Erro no upload: ${uploadError.message}`);
       }
+
+      console.log('File uploaded successfully:', uploadData);
 
       // Insert contract record
       const { data: contractData, error: contractError } = await supabase
@@ -124,8 +129,11 @@ const Dashboard = () => {
         .single();
 
       if (contractError) {
-        throw contractError;
+        console.error('Contract insert error:', contractError);
+        throw new Error(`Erro ao criar registro: ${contractError.message}`);
       }
+
+      console.log('Contract record created:', contractData);
 
       toast({
         title: "Upload realizado!",
@@ -133,18 +141,20 @@ const Dashboard = () => {
       });
 
       // Trigger analysis
-      const { error: analysisError } = await supabase.functions.invoke('analyze-contract', {
+      console.log('Invoking analyze-contract function...');
+      const { data: analysisData, error: analysisError } = await supabase.functions.invoke('analyze-contract', {
         body: { contract_id: contractData.id }
       });
 
       if (analysisError) {
-        console.error('Error starting analysis:', analysisError);
+        console.error('Analysis error:', analysisError);
         toast({
           title: "Erro na análise",
           description: "Houve um problema ao iniciar a análise. Tente novamente.",
           variant: "destructive",
         });
       } else {
+        console.log('Analysis started successfully:', analysisData);
         toast({
           title: "Análise iniciada!",
           description: "Seu contrato está sendo analisado. Isso pode levar até 2 minutos.",

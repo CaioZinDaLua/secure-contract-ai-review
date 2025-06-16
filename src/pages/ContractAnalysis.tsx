@@ -85,7 +85,16 @@ const ContractAnalysis = () => {
         .single();
 
       if (!analysisError && analysisData) {
-        setAnalysis(analysisData);
+        // Parse the analysis result properly
+        const analysisResult = analysisData.analysis_result as any;
+        setAnalysis({
+          analysis_result: {
+            summary: analysisResult.summary || '',
+            analyzed_at: analysisResult.analyzed_at || '',
+            file_name: analysisResult.file_name || '',
+            status: analysisResult.status || ''
+          }
+        });
       }
 
       // Fetch user profile
