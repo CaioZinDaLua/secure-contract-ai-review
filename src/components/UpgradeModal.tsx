@@ -111,7 +111,7 @@ const UpgradeModal = ({ trigger }: UpgradeModalProps) => {
                   <>
                     <Zap className="h-4 w-4 mr-2" />
                     Fazer Upgrade Agora
-                  </>
+                  </Button>
                 )}
               </Button>
               
