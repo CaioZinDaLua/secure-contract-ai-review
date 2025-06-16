@@ -1,13 +1,14 @@
-
 import { useState, useEffect } from "react";
 import { useAuth } from "@/hooks/useAuth";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
-import { Upload, FileText, Clock, CheckCircle, XCircle, Shield, Zap } from "lucide-react";
+import { Upload, FileText, Clock, CheckCircle, XCircle, Shield } from "lucide-react";
+import UpgradeModal from "@/components/UpgradeModal";
+import PlanBadge from "@/components/PlanBadge";
 
 interface Contract {
   id: string;
@@ -26,6 +27,7 @@ const Dashboard = () => {
   const { user, signOut } = useAuth();
   const navigate = useNavigate();
   const { toast } = useToast();
+  const [searchParams] = useSearchParams();
   const [contracts, setContracts] = useState<Contract[]>([]);
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [isUploading, setIsUploading] = useState(false);
@@ -38,7 +40,25 @@ const Dashboard = () => {
     }
     
     fetchUserData();
-  }, [user, navigate]);
+
+    // Verificar se veio de um upgrade bem-sucedido
+    const upgradeStatus = searchParams.get('upgrade');
+    if (upgradeStatus === 'success') {
+      toast({
+        title: "Upgrade realizado com sucesso!",
+        description: "Bem-vindo ao Contrato Seguro PRO! Agora você tem acesso ao chat com IA.",
+      });
+      // Remover o parâmetro da URL
+      navigate('/dashboard', { replace: true });
+    } else if (upgradeStatus === 'cancelled') {
+      toast({
+        title: "Upgrade cancelado",
+        description: "Você pode fazer o upgrade a qualquer momento.",
+        variant: "destructive",
+      });
+      navigate('/dashboard', { replace: true });
+    }
+  }, [user, navigate, searchParams, toast]);
 
   const fetchUserData = async () => {
     try {
@@ -232,12 +252,10 @@ const Dashboard = () => {
               <h1 className="text-xl font-bold text-gray-900">Contrato Seguro</h1>
             </div>
             <div className="flex items-center space-x-4">
-              <div className="flex items-center space-x-2">
-                {userProfile?.plan_type === 'pro' && (
-                  <div className="flex items-center bg-gradient-to-r from-yellow-400 to-orange-500 text-white px-3 py-1 rounded-full text-sm font-medium">
-                    <Zap className="h-4 w-4 mr-1" />
-                    PRO
-                  </div>
+              <div className="flex items-center space-x-3">
+                <PlanBadge planType={userProfile?.plan_type || 'free'} />
+                {userProfile?.plan_type !== 'pro' && (
+                  <UpgradeModal />
                 )}
                 <div className="text-sm text-gray-600">
                   Análises restantes: <span className="font-bold text-primary">{userProfile?.credits || 0}</span>
@@ -290,9 +308,23 @@ const Dashboard = () => {
                 )}
                 {userProfile?.plan_type !== 'pro' && (
                   <div className="mt-4 p-3 bg-gradient-to-r from-yellow-50 to-orange-50 border border-yellow-200 rounded-lg">
-                    <p className="text-sm text-yellow-800 font-medium">
-                      💡 Upgrade para PRO e desbloqueie o chat com IA para seus contratos!
+                    <p className="text-sm text-yellow-800 font-medium mb-2">
+                      💡 Upgrade para PRO e desbloqueie:
                     </p>
+                    <ul className="text-xs text-yellow-700 space-y-1">
+                      <li>• Chat com IA sobre seus contratos</li>
+                      <li>• Correções automáticas de cláusulas</li>
+                      <li>• Análises ilimitadas</li>
+                    </ul>
+                    <div className="mt-3">
+                      <UpgradeModal 
+                        trigger={
+                          <Button size="sm" className="w-full bg-gradient-to-r from-yellow-400 to-orange-500 hover:from-yellow-500 hover:to-orange-600 text-white">
+                            Fazer Upgrade
+                          </Button>
+                        }
+                      />
+                    </div>
                   </div>
                 )}
               </CardContent>
