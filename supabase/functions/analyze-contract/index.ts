@@ -57,13 +57,11 @@ Deno.serve(async (req) => {
 
     // 4. Determinar tipo de arquivo e processar adequadamente
     const fileName = contract.file_name.toLowerCase();
-    let fileContent = '';
-    let analysisPrompt = '';
+    let analysisResult;
 
     if (fileName.endsWith('.pdf')) {
-      // Para PDF, simular extração de texto
-      fileContent = 'Conteúdo do PDF extraído (simulado)';
-      analysisPrompt = `Você é um especialista em direito brasileiro. Analise o seguinte contrato PDF e forneça:
+      // Para PDF, usar análise de texto
+      const analysisPrompt = `Você é um especialista em direito brasileiro. Analise o seguinte contrato PDF e forneça:
 
 1. **Resumo Executivo**: Tipo de contrato e principais características
 2. **Análise de Riscos**: Identifique cláusulas problemáticas ou arriscadas
@@ -74,14 +72,51 @@ Deno.serve(async (req) => {
 Contrato: ${contract.file_name}
 Forneça uma análise detalhada e estruturada em português brasileiro.`;
 
+      const openAIResponse = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${Deno.env.get('OPENAI_API_KEY')!}`
+        },
+        body: JSON.stringify({
+          model: 'gpt-4o-mini',
+          messages: [{ role: 'user', content: analysisPrompt }],
+          temperature: 0.3,
+          max_tokens: 2000
+        })
+      });
+
+      if (!openAIResponse.ok) {
+        const errorData = await openAIResponse.text();
+        console.error('OpenAI Error:', errorData);
+        throw new Error(`Erro na análise por IA: ${openAIResponse.status}`);
+      }
+
+      const aiResult = await openAIResponse.json();
+      const analysisText = aiResult.choices[0].message.content;
+
+      analysisResult = {
+        summary: analysisText,
+        analyzed_at: new Date().toISOString(),
+        file_name: contract.file_name,
+        status: 'completed'
+      };
+
     } else if (fileName.match(/\.(jpg|jpeg|png)$/)) {
       // Para imagens, usar GPT-4 Vision
       const arrayBuffer = await fileData.arrayBuffer();
       const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)));
       
-      analysisPrompt = 'Analise esta imagem de documento jurídico e forneça uma análise detalhada em português brasileiro.';
+      const analysisPrompt = `Você é um especialista em direito brasileiro. Analise esta imagem de documento jurídico e forneça:
+
+1. **Resumo Executivo**: Tipo de documento e principais características
+2. **Análise de Riscos**: Identifique cláusulas problemáticas ou arriscadas
+3. **Pontos de Atenção**: Aspectos que merecem revisão
+4. **Recomendações**: Sugestões de melhorias ou correções
+5. **Conformidade**: Verificação com a legislação brasileira
+
+Forneça uma análise detalhada e estruturada em português brasileiro.`;
       
-      // Preparar para GPT-4 Vision
       const openAIResponse = await fetch('https://api.openai.com/v1/chat/completions', {
         method: 'POST',
         headers: {
@@ -108,29 +143,20 @@ Forneça uma análise detalhada e estruturada em português brasileiro.`;
       });
 
       if (!openAIResponse.ok) {
-        throw new Error('Erro na análise por IA da imagem');
+        const errorData = await openAIResponse.text();
+        console.error('OpenAI Error:', errorData);
+        throw new Error(`Erro na análise de imagem: ${openAIResponse.status}`);
       }
 
       const aiResult = await openAIResponse.json();
       const analysisText = aiResult.choices[0].message.content;
 
-      // Salvar análise e continuar
-      const analysisResult = {
+      analysisResult = {
         summary: analysisText,
         analyzed_at: new Date().toISOString(),
         file_name: contract.file_name,
         status: 'completed'
       };
-
-      await saveAnalysisResult(supabaseAdmin, contract_id, analysisResult, contract.user_id);
-      return new Response(JSON.stringify({ 
-        success: true, 
-        message: 'Análise de imagem concluída com sucesso',
-        analysis_id: contract_id 
-      }), {
-        status: 200,
-        headers: corsHeaders
-      });
 
     } else if (fileName.match(/\.(mp3|wav|webm|mp4)$/)) {
       // Para áudio, usar Whisper para transcrição e depois analisar
@@ -147,13 +173,15 @@ Forneça uma análise detalhada e estruturada em português brasileiro.`;
       });
 
       if (!whisperResponse.ok) {
-        throw new Error('Erro na transcrição do áudio');
+        const errorData = await whisperResponse.text();
+        console.error('Whisper Error:', errorData);
+        throw new Error(`Erro na transcrição do áudio: ${whisperResponse.status}`);
       }
 
       const transcription = await whisperResponse.json();
-      fileContent = transcription.text;
+      const fileContent = transcription.text;
       
-      analysisPrompt = `Você é um especialista em direito brasileiro. Analise a seguinte transcrição de áudio jurídico e forneça:
+      const analysisPrompt = `Você é um especialista em direito brasileiro. Analise a seguinte transcrição de áudio jurídico e forneça:
 
 1. **Resumo Executivo**: Tipo de conteúdo e principais pontos
 2. **Análise Jurídica**: Identifique questões legais mencionadas
@@ -163,10 +191,7 @@ Forneça uma análise detalhada e estruturada em português brasileiro.`;
 
 Transcrição: ${fileContent}
 Forneça uma análise detalhada e estruturada em português brasileiro.`;
-    }
 
-    // 5. Chamar OpenAI para análise (para PDF e áudio)
-    if (fileName.endsWith('.pdf') || fileName.match(/\.(mp3|wav|webm|mp4)$/)) {
       const openAIResponse = await fetch('https://api.openai.com/v1/chat/completions', {
         method: 'POST',
         headers: {
@@ -182,21 +207,26 @@ Forneça uma análise detalhada e estruturada em português brasileiro.`;
       });
 
       if (!openAIResponse.ok) {
-        throw new Error('Erro na análise por IA');
+        const errorData = await openAIResponse.text();
+        console.error('OpenAI Error:', errorData);
+        throw new Error(`Erro na análise de transcrição: ${openAIResponse.status}`);
       }
 
       const aiResult = await openAIResponse.json();
       const analysisText = aiResult.choices[0].message.content;
 
-      const analysisResult = {
+      analysisResult = {
         summary: analysisText,
         analyzed_at: new Date().toISOString(),
         file_name: contract.file_name,
         status: 'completed'
       };
-
-      await saveAnalysisResult(supabaseAdmin, contract_id, analysisResult, contract.user_id);
+    } else {
+      throw new Error('Tipo de arquivo não suportado');
     }
+
+    // 5. Salvar análise no banco
+    await saveAnalysisResult(supabaseAdmin, contract_id, analysisResult, contract.user_id);
 
     console.log('Análise concluída com sucesso para contrato:', contract_id);
 
