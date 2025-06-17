@@ -60,7 +60,7 @@ Deno.serve(async (req) => {
     let analysisResult;
 
     if (fileName.endsWith('.pdf')) {
-      // Para PDF, usar análise de texto
+      // Para PDF, simular análise de texto (na prática você precisaria extrair o texto do PDF)
       const analysisPrompt = `Você é um especialista em direito brasileiro. Analise o seguinte contrato PDF e forneça:
 
 1. **Resumo Executivo**: Tipo de contrato e principais características
@@ -244,7 +244,9 @@ Forneça uma análise detalhada e estruturada em português brasileiro.`;
     
     // Atualizar status para 'error' em caso de falha
     try {
-      const { contract_id } = await req.json();
+      const requestBody = await req.clone().json();
+      const { contract_id } = requestBody;
+      
       await supabaseAdmin
         .from('contracts')
         .update({ 
@@ -279,13 +281,21 @@ async function saveAnalysisResult(supabaseAdmin: any, contract_id: string, analy
   }
 
   // Decrementar créditos do usuário
-  const { error: creditError } = await supabaseAdmin
+  const { data: currentProfile } = await supabaseAdmin
     .from('user_profiles')
-    .update({ credits: supabaseAdmin.sql`credits - 1` })
-    .eq('user_id', user_id);
+    .select('credits')
+    .eq('user_id', user_id)
+    .single();
 
-  if (creditError) {
-    console.error('Erro ao decrementar créditos:', creditError);
+  if (currentProfile && currentProfile.credits > 0) {
+    const { error: creditError } = await supabaseAdmin
+      .from('user_profiles')
+      .update({ credits: currentProfile.credits - 1 })
+      .eq('user_id', user_id);
+
+    if (creditError) {
+      console.error('Erro ao decrementar créditos:', creditError);
+    }
   }
 
   // Atualizar status para 'success'
