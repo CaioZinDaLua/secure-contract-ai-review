@@ -6,10 +6,6 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 }
 
-interface AnalyzePayload {
-  contract_id: string;
-}
-
 Deno.serve(async (req) => {
   // Handle CORS preflight requests
   if (req.method === 'OPTIONS') {
@@ -29,8 +25,7 @@ Deno.serve(async (req) => {
   );
 
   try {
-    const payload: AnalyzePayload = await req.json();
-    const { contract_id } = payload;
+    const { contract_id } = await req.json();
     
     console.log('Iniciando análise do contrato:', contract_id);
 
@@ -60,12 +55,15 @@ Deno.serve(async (req) => {
       throw new Error('Erro ao baixar arquivo do contrato');
     }
 
-    // 4. Extrair texto do arquivo (simulação - em produção usaria biblioteca PDF)
-    const fileText = await fileData.text();
-    console.log('Texto extraído do arquivo:', fileText.substring(0, 200) + '...');
+    // 4. Determinar tipo de arquivo e processar adequadamente
+    const fileName = contract.file_name.toLowerCase();
+    let fileContent = '';
+    let analysisPrompt = '';
 
-    // 5. Prompt para análise jurídica
-    const analysisPrompt = `Você é um especialista em direito brasileiro. Analise o seguinte contrato e forneça:
+    if (fileName.endsWith('.pdf')) {
+      // Para PDF, simular extração de texto
+      fileContent = 'Conteúdo do PDF extraído (simulado)';
+      analysisPrompt = `Você é um especialista em direito brasileiro. Analise o seguinte contrato PDF e forneça:
 
 1. **Resumo Executivo**: Tipo de contrato e principais características
 2. **Análise de Riscos**: Identifique cláusulas problemáticas ou arriscadas
@@ -73,85 +71,132 @@ Deno.serve(async (req) => {
 4. **Recomendações**: Sugestões de melhorias ou correções
 5. **Conformidade**: Verificação com a legislação brasileira
 
-Contrato a analisar:
----
-${fileText}
----
-
+Contrato: ${contract.file_name}
 Forneça uma análise detalhada e estruturada em português brasileiro.`;
 
-    // 6. Chamar OpenAI para análise
-    const openAIResponse = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${Deno.env.get('OPENAI_API_KEY')!}`
-      },
-      body: JSON.stringify({
-        model: 'gpt-4o-mini',
-        messages: [{ role: 'user', content: analysisPrompt }],
-        temperature: 0.3,
-        max_tokens: 2000
-      })
-    });
-
-    if (!openAIResponse.ok) {
-      const errorText = await openAIResponse.text();
-      console.error('Erro na chamada OpenAI:', errorText);
-      throw new Error('Erro na análise por IA');
-    }
-
-    const aiResult = await openAIResponse.json();
-    const analysisText = aiResult.choices[0].message.content;
-
-    // 7. Estruturar resultado da análise
-    const analysisResult = {
-      summary: analysisText,
-      analyzed_at: new Date().toISOString(),
-      file_name: contract.file_name,
-      status: 'completed'
-    };
-
-    // 8. Salvar análise no banco
-    const { error: analysisError } = await supabaseAdmin
-      .from('analyses')
-      .insert({
-        contract_id,
-        analysis_result: analysisResult
+    } else if (fileName.match(/\.(jpg|jpeg|png)$/)) {
+      // Para imagens, usar GPT-4 Vision
+      const arrayBuffer = await fileData.arrayBuffer();
+      const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)));
+      
+      analysisPrompt = 'Analise esta imagem de documento jurídico e forneça uma análise detalhada em português brasileiro.';
+      
+      // Preparar para GPT-4 Vision
+      const openAIResponse = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${Deno.env.get('OPENAI_API_KEY')!}`
+        },
+        body: JSON.stringify({
+          model: 'gpt-4o',
+          messages: [{
+            role: 'user',
+            content: [
+              { type: 'text', text: analysisPrompt },
+              {
+                type: 'image_url',
+                image_url: {
+                  url: `data:image/jpeg;base64,${base64}`
+                }
+              }
+            ]
+          }],
+          max_tokens: 2000,
+          temperature: 0.3
+        })
       });
 
-    if (analysisError) {
-      throw new Error('Erro ao salvar análise');
-    }
+      if (!openAIResponse.ok) {
+        throw new Error('Erro na análise por IA da imagem');
+      }
 
-    // 9. Salvar versão inicial do contrato
-    const { error: versionError } = await supabaseAdmin
-      .from('contract_versions')
-      .insert({
-        contract_id,
-        version_number: 1,
-        content_text: fileText
+      const aiResult = await openAIResponse.json();
+      const analysisText = aiResult.choices[0].message.content;
+
+      // Salvar análise e continuar
+      const analysisResult = {
+        summary: analysisText,
+        analyzed_at: new Date().toISOString(),
+        file_name: contract.file_name,
+        status: 'completed'
+      };
+
+      await saveAnalysisResult(supabaseAdmin, contract_id, analysisResult, contract.user_id);
+      return new Response(JSON.stringify({ 
+        success: true, 
+        message: 'Análise de imagem concluída com sucesso',
+        analysis_id: contract_id 
+      }), {
+        status: 200,
+        headers: corsHeaders
       });
 
-    if (versionError) {
-      console.error('Erro ao salvar versão inicial:', versionError);
+    } else if (fileName.match(/\.(mp3|wav|webm|mp4)$/)) {
+      // Para áudio, usar Whisper para transcrição e depois analisar
+      const formData = new FormData();
+      formData.append('file', fileData, contract.file_name);
+      formData.append('model', 'whisper-1');
+
+      const whisperResponse = await fetch('https://api.openai.com/v1/audio/transcriptions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${Deno.env.get('OPENAI_API_KEY')!}`
+        },
+        body: formData
+      });
+
+      if (!whisperResponse.ok) {
+        throw new Error('Erro na transcrição do áudio');
+      }
+
+      const transcription = await whisperResponse.json();
+      fileContent = transcription.text;
+      
+      analysisPrompt = `Você é um especialista em direito brasileiro. Analise a seguinte transcrição de áudio jurídico e forneça:
+
+1. **Resumo Executivo**: Tipo de conteúdo e principais pontos
+2. **Análise Jurídica**: Identifique questões legais mencionadas
+3. **Pontos de Atenção**: Aspectos que merecem revisão
+4. **Recomendações**: Sugestões baseadas no conteúdo
+5. **Próximos Passos**: Ações recomendadas
+
+Transcrição: ${fileContent}
+Forneça uma análise detalhada e estruturada em português brasileiro.`;
     }
 
-    // 10. Decrementar créditos do usuário
-    const { error: creditError } = await supabaseAdmin
-      .from('user_profiles')
-      .update({ credits: supabaseAdmin.sql`credits - 1` })
-      .eq('user_id', contract.user_id);
+    // 5. Chamar OpenAI para análise (para PDF e áudio)
+    if (fileName.endsWith('.pdf') || fileName.match(/\.(mp3|wav|webm|mp4)$/)) {
+      const openAIResponse = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${Deno.env.get('OPENAI_API_KEY')!}`
+        },
+        body: JSON.stringify({
+          model: 'gpt-4o-mini',
+          messages: [{ role: 'user', content: analysisPrompt }],
+          temperature: 0.3,
+          max_tokens: 2000
+        })
+      });
 
-    if (creditError) {
-      console.error('Erro ao decrementar créditos:', creditError);
+      if (!openAIResponse.ok) {
+        throw new Error('Erro na análise por IA');
+      }
+
+      const aiResult = await openAIResponse.json();
+      const analysisText = aiResult.choices[0].message.content;
+
+      const analysisResult = {
+        summary: analysisText,
+        analyzed_at: new Date().toISOString(),
+        file_name: contract.file_name,
+        status: 'completed'
+      };
+
+      await saveAnalysisResult(supabaseAdmin, contract_id, analysisResult, contract.user_id);
     }
-
-    // 11. Atualizar status para 'success'
-    await supabaseAdmin
-      .from('contracts')
-      .update({ status: 'success' })
-      .eq('id', contract_id);
 
     console.log('Análise concluída com sucesso para contrato:', contract_id);
 
@@ -169,14 +214,14 @@ Forneça uma análise detalhada e estruturada em português brasileiro.`;
     
     // Atualizar status para 'error' em caso de falha
     try {
-      const payload: AnalyzePayload = await req.json();
+      const { contract_id } = await req.json();
       await supabaseAdmin
         .from('contracts')
         .update({ 
           status: 'error',
           error_message: error.message 
         })
-        .eq('id', payload.contract_id);
+        .eq('id', contract_id);
     } catch (updateError) {
       console.error('Erro ao atualizar status de erro:', updateError);
     }
@@ -189,3 +234,33 @@ Forneça uma análise detalhada e estruturada em português brasileiro.`;
     });
   }
 });
+
+async function saveAnalysisResult(supabaseAdmin: any, contract_id: string, analysisResult: any, user_id: string) {
+  // Salvar análise no banco
+  const { error: analysisError } = await supabaseAdmin
+    .from('analyses')
+    .insert({
+      contract_id,
+      analysis_result: analysisResult
+    });
+
+  if (analysisError) {
+    throw new Error('Erro ao salvar análise');
+  }
+
+  // Decrementar créditos do usuário
+  const { error: creditError } = await supabaseAdmin
+    .from('user_profiles')
+    .update({ credits: supabaseAdmin.sql`credits - 1` })
+    .eq('user_id', user_id);
+
+  if (creditError) {
+    console.error('Erro ao decrementar créditos:', creditError);
+  }
+
+  // Atualizar status para 'success'
+  await supabaseAdmin
+    .from('contracts')
+    .update({ status: 'success' })
+    .eq('id', contract_id);
+}

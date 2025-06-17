@@ -50,7 +50,6 @@ const Dashboard = () => {
         title: "Upgrade realizado com sucesso!",
         description: "Bem-vindo ao plano PRO! Suas funcionalidades foram desbloqueadas.",
       });
-      // Remove the parameter from URL
       navigate('/dashboard', { replace: true });
     } else if (upgradeStatus === 'cancelled') {
       toast({
@@ -110,21 +109,32 @@ const Dashboard = () => {
       return;
     }
 
-    // Check file type
-    if (file.type !== 'application/pdf') {
+    // Check file type - aceitar PDF, imagens e áudio
+    const allowedTypes = [
+      'application/pdf',
+      'image/jpeg',
+      'image/png',
+      'image/jpg',
+      'audio/mpeg',
+      'audio/wav',
+      'audio/webm',
+      'audio/mp4'
+    ];
+    
+    if (!allowedTypes.includes(file.type)) {
       toast({
         title: "Tipo de arquivo inválido",
-        description: "Por favor, envie apenas arquivos PDF.",
+        description: "Por favor, envie arquivos PDF, imagens (JPG/PNG) ou áudio (MP3/WAV).",
         variant: "destructive",
       });
       return;
     }
 
-    // Check file size (5MB limit)
-    if (file.size > 5 * 1024 * 1024) {
+    // Check file size (10MB limit)
+    if (file.size > 10 * 1024 * 1024) {
       toast({
         title: "Arquivo muito grande",
-        description: "O arquivo deve ter no máximo 5MB.",
+        description: "O arquivo deve ter no máximo 10MB.",
         variant: "destructive",
       });
       return;
@@ -133,21 +143,46 @@ const Dashboard = () => {
     setIsUploading(true);
 
     try {
-      // Create form data
-      const formData = new FormData();
-      formData.append('file', file);
+      // Upload file to storage first
+      const fileExt = file.name.split('.').pop();
+      const fileName = `${Date.now()}.${fileExt}`;
+      const filePath = `${user!.id}/${fileName}`;
 
-      // Upload and analyze contract
-      const { data, error } = await supabase.functions.invoke('analyze-contract', {
-        body: formData,
+      const { error: uploadError } = await supabase.storage
+        .from('contract-uploads')
+        .upload(filePath, file);
+
+      if (uploadError) {
+        throw new Error(`Erro no upload: ${uploadError.message}`);
+      }
+
+      // Create contract record
+      const { data: contractData, error: contractError } = await supabase
+        .from('contracts')
+        .insert({
+          user_id: user!.id,
+          file_name: file.name,
+          file_path: filePath,
+          status: 'pending'
+        })
+        .select()
+        .single();
+
+      if (contractError) {
+        throw new Error(`Erro ao criar contrato: ${contractError.message}`);
+      }
+
+      // Start analysis
+      const { error: analysisError } = await supabase.functions.invoke('analyze-contract', {
+        body: { contract_id: contractData.id }
       });
 
-      if (error) {
-        throw error;
+      if (analysisError) {
+        throw new Error(`Erro na análise: ${analysisError.message}`);
       }
 
       toast({
-        title: "Contrato enviado!",
+        title: "Arquivo enviado!",
         description: "Sua análise está sendo processada. Você será redirecionado em instantes.",
       });
 
@@ -156,7 +191,7 @@ const Dashboard = () => {
 
       // Redirect to analysis page
       setTimeout(() => {
-        navigate(`/analise/${data.contract_id}`);
+        navigate(`/analise/${contractData.id}`);
       }, 2000);
 
     } catch (error: any) {
@@ -168,7 +203,6 @@ const Dashboard = () => {
       });
     } finally {
       setIsUploading(false);
-      // Reset input
       event.target.value = '';
     }
   };
@@ -245,9 +279,9 @@ const Dashboard = () => {
             {/* Upload Section */}
             <Card>
               <CardHeader>
-                <CardTitle>Enviar Novo Contrato</CardTitle>
+                <CardTitle>Enviar Novo Documento</CardTitle>
                 <CardDescription>
-                  Faça upload de um arquivo PDF para análise jurídica automatizada
+                  Faça upload de PDF, imagens ou áudio para análise jurídica automatizada
                 </CardDescription>
               </CardHeader>
               <CardContent>
@@ -261,12 +295,12 @@ const Dashboard = () => {
                       <p className="mb-2 text-sm text-gray-500">
                         <span className="font-semibold">Clique para enviar</span> ou arraste e solte
                       </p>
-                      <p className="text-xs text-gray-500">PDF (MAX. 5MB)</p>
+                      <p className="text-xs text-gray-500">PDF, Imagens (JPG/PNG) ou Áudio (MP3/WAV) - MAX. 10MB</p>
                     </div>
                     <Input
                       id="contract-upload"
                       type="file"
-                      accept=".pdf"
+                      accept=".pdf,.jpg,.jpeg,.png,.mp3,.wav,.webm,.mp4"
                       className="hidden"
                       onChange={handleFileUpload}
                       disabled={isUploading}
@@ -277,7 +311,7 @@ const Dashboard = () => {
                   <div className="mt-4 text-center">
                     <div className="inline-flex items-center">
                       <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-primary mr-2"></div>
-                      Processando contrato...
+                      Processando arquivo...
                     </div>
                   </div>
                 )}
@@ -287,18 +321,18 @@ const Dashboard = () => {
             {/* Contracts List */}
             <Card>
               <CardHeader>
-                <CardTitle>Seus Contratos</CardTitle>
+                <CardTitle>Seus Documentos</CardTitle>
                 <CardDescription>
-                  Histórico de contratos analisados
+                  Histórico de arquivos analisados
                 </CardDescription>
               </CardHeader>
               <CardContent>
                 {contracts.length === 0 ? (
                   <div className="text-center py-8">
                     <FileText className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-                    <p className="text-gray-500">Nenhum contrato analisado ainda</p>
+                    <p className="text-gray-500">Nenhum documento analisado ainda</p>
                     <p className="text-sm text-gray-400 mt-2">
-                      Faça upload do seu primeiro contrato para começar
+                      Faça upload do seu primeiro arquivo para começar
                     </p>
                   </div>
                 ) : (
@@ -336,8 +370,8 @@ const Dashboard = () => {
       </div>
 
       <UpgradeModal 
-        isOpen={showUpgradeModal} 
-        onClose={() => setShowUpgradeModal(false)} 
+        open={showUpgradeModal} 
+        onOpenChange={setShowUpgradeModal} 
       />
     </div>
   );
