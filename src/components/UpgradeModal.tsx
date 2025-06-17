@@ -11,13 +11,19 @@ import { Zap, Check, Star, Sparkles } from "lucide-react";
 
 interface UpgradeModalProps {
   trigger?: React.ReactNode;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 }
 
-const UpgradeModal = ({ trigger }: UpgradeModalProps) => {
+const UpgradeModal = ({ trigger, open, onOpenChange }: UpgradeModalProps) => {
   const { user } = useAuth();
   const { toast } = useToast();
   const [isLoading, setIsLoading] = useState(false);
-  const [isOpen, setIsOpen] = useState(false);
+  const [internalOpen, setInternalOpen] = useState(false);
+
+  // Use controlled or uncontrolled state based on props
+  const isOpen = open !== undefined ? open : internalOpen;
+  const setIsOpen = onOpenChange || setInternalOpen;
 
   const handleUpgrade = async () => {
     if (!user) return;
