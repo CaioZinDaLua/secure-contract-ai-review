@@ -1,171 +1,149 @@
 
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 
 const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-}
-
-interface ChatPayload {
-  contract_id: string;
-  user_message: string;
-}
-
-const getChatAiPrompt = (
-  originalAnalysis: string,
-  chatHistory: string,
-  latestVersionText: string,
-  userMessage: string
-): string => {
-  return `Você é "Contrato Seguro", um assistente jurídico virtual especialista em legislação brasileira. Sua tarefa é responder perguntas e, quando solicitado explicitamente, fazer correções no contrato de um usuário.
-
-CONTEXTO FORNECIDO:
-1.  **Análise Inicial do Contrato:**
-    ${originalAnalysis}
-
-2.  **Histórico da Conversa (últimas 5 trocas):**
-    ${chatHistory}
-
-3.  **Versão Mais Recente do Contrato (Texto Completo):**
-    ---
-    ${latestVersionText}
-    ---
-
-TAREFA ATUAL:
-O usuário disse: "${userMessage}"
-
-INSTRUÇÕES:
-- Baseie TODAS as suas respostas no contexto fornecido.
-- Se o usuário fizer uma pergunta, responda de forma clara e objetiva.
-- **SE E SOMENTE SE** o usuário usar frases como "corrija o contrato", "altere a cláusula", "modifique o texto" ou "faça a correção", você deve:
-    1.  Confirmar a alteração na sua resposta.
-    2.  No final da sua resposta, incluir o texto COMPLETO e ATUALIZADO do contrato dentro de um bloco delimitado por "[[[START_CONTRACT]]]" e "[[[END_CONTRACT]]]". É crucial que o contrato inteiro seja retornado, não apenas a parte alterada.
-- Se não for um pedido de correção, apenas responda à pergunta sem incluir o bloco de contrato.
-`;
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-Deno.serve(async (req) => {
-  // Handle CORS preflight requests
-  if (req.method === 'OPTIONS') {
+serve(async (req) => {
+  if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
   }
 
-  if (req.method !== 'POST') {
-    return new Response(JSON.stringify({ error: 'Method Not Allowed' }), { 
-      status: 405,
-      headers: corsHeaders 
-    });
-  }
-
-  const supabaseAdmin = createClient(
-    Deno.env.get('SUPABASE_URL')!,
-    Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
-  );
-
   try {
-    const payload: ChatPayload = await req.json();
-    const { contract_id, user_message } = payload;
+    const supabaseClient = createClient(
+      Deno.env.get("SUPABASE_URL") ?? "",
+      Deno.env.get("SUPABASE_ANON_KEY") ?? ""
+    );
+
+    // Verificar autenticação
+    const authHeader = req.headers.get("Authorization")!;
+    const token = authHeader.replace("Bearer ", "");
+    const { data } = await supabaseClient.auth.getUser(token);
+    const user = data.user;
     
-    // Extrai o user_id do token de autorização JWT
-    const authHeader = req.headers.get('Authorization')!;
-    const jwt = authHeader.replace('Bearer ', '');
-    const { data: { user } } = await supabaseAdmin.auth.getUser(jwt);
-    if (!user) throw new Error("Usuário não autenticado.");
+    if (!user) {
+      throw new Error("Usuário não autenticado");
+    }
 
-    // Removida a verificação de plano PRO - agora todos podem usar o chat
+    const { contract_id, user_message, general_chat } = await req.json();
 
-    // Coleta de Contexto
-    // Análise inicial
-    const { data: analysisData } = await supabaseAdmin
-      .from('analyses')
-      .select('analysis_result')
-      .eq('contract_id', contract_id)
-      .single();
-    
-    // Versão mais recente do texto
-    const { data: versionData } = await supabaseAdmin
-      .from('contract_versions')
-      .select('content_text, version_number')
-      .eq('contract_id', contract_id)
-      .order('version_number', { ascending: false })
-      .limit(1)
-      .single();
-    
-    // Histórico da conversa
-    const { data: chatData } = await supabaseAdmin
-      .from('chat_history')
-      .select('user_message, ai_response')
-      .eq('contract_id', contract_id)
-      .order('created_at', { ascending: false })
-      .limit(5);
+    if (!user_message) {
+      throw new Error("Mensagem do usuário é obrigatória");
+    }
 
-    const originalAnalysis = JSON.stringify(analysisData?.analysis_result || {});
-    const latestVersionText = versionData?.content_text || '';
-    const chatHistory = chatData?.map(m => `Usuário: ${m.user_message}\nIA: ${m.ai_response}`).reverse().join('\n') || 'Nenhum histórico.';
+    // Preparar contexto
+    let context = "";
+    let systemPrompt = "";
 
-    // Chamada para a IA
-    const aiPrompt = getChatAiPrompt(originalAnalysis, chatHistory, latestVersionText, user_message);
+    if (general_chat) {
+      // Chat geral sobre questões jurídicas
+      systemPrompt = `Você é uma assistente jurídica virtual especializada em direito brasileiro. 
+      Responda perguntas sobre direito de forma clara, didática e precisa.
+      Sempre mencione que suas respostas são informativas e não substituem a consulta com um advogado.
+      Mantenha as respostas concisas mas completas.
+      Responda sempre em português brasileiro.`;
+    } else {
+      // Chat específico sobre contrato
+      if (!contract_id) {
+        throw new Error("ID do contrato é obrigatório para chat específico");
+      }
+
+      // Buscar o contrato e sua análise
+      const { data: contractData, error: contractError } = await supabaseClient
+        .from('contracts')
+        .select('file_name')
+        .eq('id', contract_id)
+        .eq('user_id', user.id)
+        .single();
+
+      if (contractError || !contractData) {
+        throw new Error("Contrato não encontrado");
+      }
+
+      const { data: analysisData, error: analysisError } = await supabaseClient
+        .from('analyses')
+        .select('analysis_result')
+        .eq('contract_id', contract_id)
+        .single();
+
+      if (analysisError || !analysisData) {
+        throw new Error("Análise do contrato não encontrada");
+      }
+
+      context = `Contrato: ${contractData.file_name}\n\nAnálise: ${JSON.stringify(analysisData.analysis_result)}`;
+      systemPrompt = `Você é um assistente jurídico especializado em análise de contratos. 
+      Responda perguntas sobre o contrato fornecido de forma clara e precisa.
+      Use as informações da análise para dar respostas contextualizadas.
+      Sempre mencione que suas respostas são informativas e não substituem a consulta com um advogado.
+      Responda sempre em português brasileiro.`;
+    }
+
+    // Fazer chamada para OpenAI
     const openAIResponse = await fetch('https://api.openai.com/v1/chat/completions', {
-        method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json', 
-          'Authorization': `Bearer ${Deno.env.get('OPENAI_API_KEY')!}` 
-        },
-        body: JSON.stringify({
-            model: 'gpt-4-turbo',
-            messages: [{ role: 'user', content: aiPrompt }],
-            temperature: 0.5,
-        }),
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${Deno.env.get('OPENAI_API_KEY')}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'gpt-4o-mini',
+        messages: [
+          {
+            role: 'system',
+            content: systemPrompt
+          },
+          {
+            role: 'user',
+            content: context ? `${context}\n\nPergunta: ${user_message}` : user_message
+          }
+        ],
+        max_tokens: 1000,
+        temperature: 0.7,
+      }),
     });
 
-    if (!openAIResponse.ok) throw new Error("Erro na comunicação com a IA.");
-    
-    const aiResult = await openAIResponse.json();
-    let aiResponseMessage = aiResult.choices[0].message.content;
-
-    // Processamento e Persistência
-    let newContractText: string | null = null;
-    const contractRegex = /\[\[\[START_CONTRACT\]\]\]([\s\S]*?)\[\[\[END_CONTRACT\]\]\]/;
-    const match = aiResponseMessage.match(contractRegex);
-
-    if (match && match[1]) {
-      newContractText = match[1].trim();
-      // Limpa a resposta para o usuário, removendo o bloco do contrato
-      aiResponseMessage = aiResponseMessage.replace(contractRegex, '').trim();
+    if (!openAIResponse.ok) {
+      throw new Error(`Erro na API OpenAI: ${openAIResponse.status}`);
     }
-    
-    // Salva a conversa no histórico
-    await supabaseAdmin
-      .from('chat_history')
-      .insert({ 
-        contract_id, 
-        user_id: user.id, 
-        user_message, 
-        ai_response: aiResponseMessage 
-      });
-    
-    // Se houver uma nova versão, salva-a
-    if (newContractText) {
-      const newVersionNumber = (versionData?.version_number || 0) + 1;
-      await supabaseAdmin
-        .from('contract_versions')
+
+    const openAIData = await openAIResponse.json();
+    const aiResponse = openAIData.choices[0]?.message?.content || "Desculpe, não consegui processar sua pergunta.";
+
+    // Salvar no histórico apenas se for chat específico de contrato
+    if (!general_chat && contract_id) {
+      const { error: insertError } = await supabaseClient
+        .from('chat_history')
         .insert({
           contract_id,
-          version_number: newVersionNumber,
-          content_text: newContractText
+          user_message,
+          ai_response: aiResponse,
+          user_id: user.id
         });
+
+      if (insertError) {
+        console.error('Erro ao salvar histórico:', insertError);
+      }
     }
 
-    return new Response(JSON.stringify({ ai_response: aiResponseMessage }), {
-      status: 200,
-      headers: corsHeaders,
-    });
+    return new Response(
+      JSON.stringify({ ai_response: aiResponse }),
+      {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+        status: 200,
+      }
+    );
 
   } catch (error) {
-    console.error('Erro no chat:', error);
-    return new Response(JSON.stringify({ error: error.message }), {
-      status: 500,
-      headers: corsHeaders,
-    });
+    console.error("Erro no chat:", error);
+    return new Response(
+      JSON.stringify({ error: error.message }),
+      {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+        status: 500,
+      }
+    );
   }
 });
