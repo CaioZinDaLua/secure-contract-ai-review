@@ -26,24 +26,57 @@ const UpgradeModal = ({ trigger, open, onOpenChange }: UpgradeModalProps) => {
   const setIsOpen = onOpenChange || setInternalOpen;
 
   const handleUpgrade = async () => {
-    if (!user) return;
+    if (!user) {
+      toast({
+        title: "Erro de autenticação",
+        description: "Você precisa estar logado para fazer o upgrade.",
+        variant: "destructive",
+      });
+      return;
+    }
 
     setIsLoading(true);
+    console.log('Iniciando processo de upgrade...');
+    
     try {
+      console.log('Chamando função create-checkout...');
       const { data, error } = await supabase.functions.invoke('create-checkout', {
         body: { plan: 'pro' }
       });
 
-      if (error) throw error;
+      console.log('Resposta da função:', { data, error });
 
-      if (data?.url) {
-        window.location.href = data.url;
+      if (error) {
+        console.error('Erro da função:', error);
+        throw new Error(error.message || 'Erro ao processar o upgrade');
       }
+
+      if (!data?.url) {
+        console.error('URL de checkout não retornada:', data);
+        throw new Error('URL de checkout não foi gerada');
+      }
+
+      console.log('Redirecionando para checkout:', data.url);
+      
+      // Redirecionar para o Stripe Checkout
+      window.location.href = data.url;
+      
     } catch (error: any) {
-      console.error('Erro no upgrade:', error);
+      console.error('Erro no processo de upgrade:', error);
+      
+      let errorMessage = "Erro ao processar o upgrade. Tente novamente.";
+      
+      if (error.message?.includes('not authenticated')) {
+        errorMessage = "Sessão expirada. Faça login novamente.";
+      } else if (error.message?.includes('Stripe')) {
+        errorMessage = "Erro no sistema de pagamento. Tente novamente em alguns minutos.";
+      } else if (error.message) {
+        errorMessage = error.message;
+      }
+      
       toast({
         title: "Erro no upgrade",
-        description: error.message || "Erro ao processar o upgrade. Tente novamente.",
+        description: errorMessage,
         variant: "destructive",
       });
     } finally {
@@ -105,7 +138,7 @@ const UpgradeModal = ({ trigger, open, onOpenChange }: UpgradeModalProps) => {
               
               <Button 
                 onClick={handleUpgrade}
-                disabled={isLoading}
+                disabled={isLoading || !user}
                 className="w-full mt-6 bg-gradient-to-r from-yellow-400 to-orange-500 hover:from-yellow-500 hover:to-orange-600 text-white font-bold py-3"
               >
                 {isLoading ? (
