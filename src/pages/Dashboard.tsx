@@ -38,8 +38,13 @@ const Dashboard = () => {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    console.log('Dashboard useEffect - user:', user);
     if (user) {
+      console.log('Fetching user data for user:', user.id);
       fetchUserData();
+    } else {
+      console.log('No user found, setting loading to false');
+      setLoading(false);
     }
   }, [user]);
 
@@ -62,8 +67,12 @@ const Dashboard = () => {
   }, [searchParams, toast, navigate]);
 
   const fetchUserData = async () => {
+    console.log('Starting fetchUserData...');
     try {
+      setLoading(true);
+      
       // Fetch user profile
+      console.log('Fetching user profile...');
       const { data: profileData, error: profileError } = await supabase
         .from('user_profiles')
         .select('credits, plan_type')
@@ -72,11 +81,34 @@ const Dashboard = () => {
 
       if (profileError) {
         console.error('Error fetching profile:', profileError);
+        // Create profile if it doesn't exist
+        if (profileError.code === 'PGRST116') {
+          console.log('Profile not found, creating new profile...');
+          const { data: newProfile, error: createError } = await supabase
+            .from('user_profiles')
+            .insert({ user_id: user!.id, credits: 3, plan_type: 'free' })
+            .select('credits, plan_type')
+            .single();
+          
+          if (createError) {
+            console.error('Error creating profile:', createError);
+            toast({
+              title: "Erro",
+              description: "Erro ao criar perfil do usuário.",
+              variant: "destructive",
+            });
+          } else {
+            console.log('Profile created successfully:', newProfile);
+            setUserProfile(newProfile);
+          }
+        }
       } else {
+        console.log('Profile data fetched:', profileData);
         setUserProfile(profileData);
       }
 
       // Fetch contracts
+      console.log('Fetching contracts...');
       const { data: contractsData, error: contractsError } = await supabase
         .from('contracts')
         .select('*')
@@ -85,12 +117,24 @@ const Dashboard = () => {
 
       if (contractsError) {
         console.error('Error fetching contracts:', contractsError);
+        toast({
+          title: "Erro",
+          description: "Erro ao carregar contratos.",
+          variant: "destructive",
+        });
       } else {
+        console.log('Contracts data fetched:', contractsData);
         setContracts(contractsData || []);
       }
     } catch (error) {
-      console.error('Error fetching user data:', error);
+      console.error('Error in fetchUserData:', error);
+      toast({
+        title: "Erro",
+        description: "Erro ao carregar dados do usuário.",
+        variant: "destructive",
+      });
     } finally {
+      console.log('Setting loading to false');
       setLoading(false);
     }
   };
@@ -98,6 +142,8 @@ const Dashboard = () => {
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
+
+    console.log('File selected:', file.name, file.type, file.size);
 
     // Check if user has credits
     if (!userProfile || userProfile.credits <= 0) {
@@ -141,6 +187,7 @@ const Dashboard = () => {
     }
 
     setIsUploading(true);
+    console.log('Starting file upload...');
 
     try {
       // Upload file to storage first
@@ -148,14 +195,17 @@ const Dashboard = () => {
       const fileName = `${Date.now()}.${fileExt}`;
       const filePath = `${user!.id}/${fileName}`;
 
+      console.log('Uploading to storage:', filePath);
       const { error: uploadError } = await supabase.storage
         .from('contract-uploads')
         .upload(filePath, file);
 
       if (uploadError) {
+        console.error('Storage upload error:', uploadError);
         throw new Error(`Erro no upload: ${uploadError.message}`);
       }
 
+      console.log('File uploaded successfully, creating contract record...');
       // Create contract record
       const { data: contractData, error: contractError } = await supabase
         .from('contracts')
@@ -169,15 +219,18 @@ const Dashboard = () => {
         .single();
 
       if (contractError) {
+        console.error('Contract creation error:', contractError);
         throw new Error(`Erro ao criar contrato: ${contractError.message}`);
       }
 
+      console.log('Contract created, starting analysis:', contractData.id);
       // Start analysis
       const { error: analysisError } = await supabase.functions.invoke('analyze-contract', {
         body: { contract_id: contractData.id }
       });
 
       if (analysisError) {
+        console.error('Analysis error:', analysisError);
         throw new Error(`Erro na análise: ${analysisError.message}`);
       }
 
@@ -195,7 +248,7 @@ const Dashboard = () => {
       }, 2000);
 
     } catch (error: any) {
-      console.error('Error uploading file:', error);
+      console.error('Error in file upload process:', error);
       toast({
         title: "Erro no upload",
         description: error.message || "Erro ao enviar arquivo.",
@@ -209,6 +262,7 @@ const Dashboard = () => {
 
   const handleSignOut = async () => {
     try {
+      console.log('Signing out...');
       await signOut();
       navigate('/');
     } catch (error) {
@@ -216,7 +270,9 @@ const Dashboard = () => {
     }
   };
 
+  // Show loading state
   if (loading) {
+    console.log('Rendering loading state');
     return (
       <div className="min-h-screen flex items-center justify-center">
         <div className="text-center">
@@ -226,6 +282,15 @@ const Dashboard = () => {
       </div>
     );
   }
+
+  // Show login prompt if no user
+  if (!user) {
+    console.log('No user, redirecting to home');
+    navigate('/');
+    return null;
+  }
+
+  console.log('Rendering dashboard with user:', user.id);
 
   return (
     <div className="min-h-screen bg-gray-50">
