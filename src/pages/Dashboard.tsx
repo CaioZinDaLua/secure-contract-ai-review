@@ -1,4 +1,3 @@
-
 import { useState, useEffect } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
@@ -12,6 +11,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import PlanBadge from "@/components/PlanBadge";
 import UpgradeModal from "@/components/UpgradeModal";
 import ChatBot from "@/components/ChatBot";
+import SecurityAlert from "@/components/SecurityAlert";
+import FileUploadValidator from "@/components/FileUploadValidator";
 
 interface Contract {
   id: string;
@@ -155,109 +156,97 @@ const Dashboard = () => {
       return;
     }
 
-    // Check file type - aceitar PDF, imagens e áudio
-    const allowedTypes = [
-      'application/pdf',
-      'image/jpeg',
-      'image/png',
-      'image/jpg',
-      'audio/mpeg',
-      'audio/wav',
-      'audio/webm',
-      'audio/mp4'
-    ];
-    
-    if (!allowedTypes.includes(file.type)) {
-      toast({
-        title: "Tipo de arquivo inválido",
-        description: "Por favor, envie arquivos PDF, imagens (JPG/PNG) ou áudio (MP3/WAV).",
-        variant: "destructive",
-      });
-      return;
-    }
+    // Use the file validator
+    const handleValidFile = async (validatedFile: File) => {
+      setIsUploading(true);
+      console.log('Starting file upload...');
 
-    // Check file size (10MB limit)
-    if (file.size > 10 * 1024 * 1024) {
-      toast({
-        title: "Arquivo muito grande",
-        description: "O arquivo deve ter no máximo 10MB.",
-        variant: "destructive",
-      });
-      return;
-    }
+      try {
+        // Upload file to storage first
+        const fileExt = validatedFile.name.split('.').pop();
+        const sanitizedFileName = validatedFile.name.replace(/[<>:"/\\|?*]/g, '_'); // Sanitizar nome
+        const fileName = `${Date.now()}_${sanitizedFileName}`;
+        const filePath = `${user!.id}/${fileName}`;
 
-    setIsUploading(true);
-    console.log('Starting file upload...');
+        console.log('Uploading to storage:', filePath);
+        const { error: uploadError } = await supabase.storage
+          .from('contract-uploads')
+          .upload(filePath, validatedFile, {
+            cacheControl: '3600',
+            upsert: false // Não sobrescrever arquivos existentes
+          });
 
-    try {
-      // Upload file to storage first
-      const fileExt = file.name.split('.').pop();
-      const fileName = `${Date.now()}.${fileExt}`;
-      const filePath = `${user!.id}/${fileName}`;
+        if (uploadError) {
+          console.error('Storage upload error:', uploadError);
+          throw new Error(`Erro no upload: ${uploadError.message}`);
+        }
 
-      console.log('Uploading to storage:', filePath);
-      const { error: uploadError } = await supabase.storage
-        .from('contract-uploads')
-        .upload(filePath, file);
+        console.log('File uploaded successfully, creating contract record...');
+        // Create contract record
+        const { data: contractData, error: contractError } = await supabase
+          .from('contracts')
+          .insert({
+            user_id: user!.id,
+            file_name: sanitizedFileName,
+            file_path: filePath,
+            status: 'pending'
+          })
+          .select()
+          .single();
 
-      if (uploadError) {
-        console.error('Storage upload error:', uploadError);
-        throw new Error(`Erro no upload: ${uploadError.message}`);
+        if (contractError) {
+          console.error('Contract creation error:', contractError);
+          throw new Error(`Erro ao criar contrato: ${contractError.message}`);
+        }
+
+        console.log('Contract created, starting analysis:', contractData.id);
+        // Start analysis
+        const { error: analysisError } = await supabase.functions.invoke('analyze-contract', {
+          body: { contract_id: contractData.id }
+        });
+
+        if (analysisError) {
+          console.error('Analysis error:', analysisError);
+          throw new Error(`Erro na análise: ${analysisError.message}`);
+        }
+
+        toast({
+          title: "Arquivo enviado!",
+          description: "Sua análise está sendo processada. Você será redirecionado em instantes.",
+        });
+
+        // Refresh data
+        fetchUserData();
+
+        // Redirect to analysis page
+        setTimeout(() => {
+          navigate(`/analise/${contractData.id}`);
+        }, 2000);
+
+      } catch (error: any) {
+        console.error('Error in file upload process:', error);
+        toast({
+          title: "Erro no upload",
+          description: error.message || "Erro ao enviar arquivo.",
+          variant: "destructive",
+        });
+      } finally {
+        setIsUploading(false);
+        event.target.value = '';
       }
+    };
 
-      console.log('File uploaded successfully, creating contract record...');
-      // Create contract record
-      const { data: contractData, error: contractError } = await supabase
-        .from('contracts')
-        .insert({
-          user_id: user!.id,
-          file_name: file.name,
-          file_path: filePath,
-          status: 'pending'
-        })
-        .select()
-        .single();
-
-      if (contractError) {
-        console.error('Contract creation error:', contractError);
-        throw new Error(`Erro ao criar contrato: ${contractError.message}`);
-      }
-
-      console.log('Contract created, starting analysis:', contractData.id);
-      // Start analysis
-      const { error: analysisError } = await supabase.functions.invoke('analyze-contract', {
-        body: { contract_id: contractData.id }
-      });
-
-      if (analysisError) {
-        console.error('Analysis error:', analysisError);
-        throw new Error(`Erro na análise: ${analysisError.message}`);
-      }
-
-      toast({
-        title: "Arquivo enviado!",
-        description: "Sua análise está sendo processada. Você será redirecionado em instantes.",
-      });
-
-      // Refresh data
-      fetchUserData();
-
-      // Redirect to analysis page
-      setTimeout(() => {
-        navigate(`/analise/${contractData.id}`);
-      }, 2000);
-
-    } catch (error: any) {
-      console.error('Error in file upload process:', error);
-      toast({
-        title: "Erro no upload",
-        description: error.message || "Erro ao enviar arquivo.",
-        variant: "destructive",
-      });
-    } finally {
-      setIsUploading(false);
+    const handleInvalidFile = (error: string) => {
+      console.error('File validation failed:', error);
       event.target.value = '';
-    }
+    };
+
+    // Validate file using the validator component
+    return <FileUploadValidator 
+      file={file}
+      onValid={handleValidFile}
+      onInvalid={handleInvalidFile}
+    />;
   };
 
   const handleSignOut = async () => {
@@ -328,6 +317,9 @@ const Dashboard = () => {
       </div>
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        {/* Security Alerts */}
+        <SecurityAlert />
+
         <Tabs defaultValue="contracts" className="space-y-6">
           <TabsList className="grid w-full grid-cols-2">
             <TabsTrigger value="contracts" className="flex items-center">
@@ -361,6 +353,9 @@ const Dashboard = () => {
                         <span className="font-semibold">Clique para enviar</span> ou arraste e solte
                       </p>
                       <p className="text-xs text-gray-500">PDF, Imagens (JPG/PNG) ou Áudio (MP3/WAV) - MAX. 10MB</p>
+                      <p className="text-xs text-red-500 mt-1">
+                        ⚠️ Arquivos são validados por segurança
+                      </p>
                     </div>
                     <Input
                       id="contract-upload"
@@ -376,7 +371,7 @@ const Dashboard = () => {
                   <div className="mt-4 text-center">
                     <div className="inline-flex items-center">
                       <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-primary mr-2"></div>
-                      Processando arquivo...
+                      Processando arquivo com segurança...
                     </div>
                   </div>
                 )}

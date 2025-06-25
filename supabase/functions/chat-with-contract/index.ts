@@ -7,6 +7,50 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
+// Rate limiting store
+const rateLimitStore = new Map<string, { count: number; resetTime: number }>();
+
+// Helper function for rate limiting
+function checkRateLimit(userId: string, maxRequests = 30, windowMs = 60000): boolean {
+  const now = Date.now();
+  const userLimit = rateLimitStore.get(userId);
+  
+  if (!userLimit || now > userLimit.resetTime) {
+    rateLimitStore.set(userId, { count: 1, resetTime: now + windowMs });
+    return true;
+  }
+  
+  if (userLimit.count >= maxRequests) {
+    return false;
+  }
+  
+  userLimit.count++;
+  return true;
+}
+
+// Helper function for input sanitization
+function sanitizeInput(input: string): string {
+  return input.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
+              .replace(/[<>]/g, '')
+              .trim()
+              .substring(0, 2000); // Limitar tamanho da mensagem
+}
+
+// Helper function for audit logging
+async function logAuditEvent(supabase: any, userId: string, action: string, details: any) {
+  try {
+    await supabase.from('audit_logs').insert({
+      user_id: userId,
+      action,
+      details,
+      timestamp: new Date().toISOString(),
+      ip_address: 'edge-function'
+    });
+  } catch (error) {
+    console.error('Failed to log audit event:', error);
+  }
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -19,19 +63,35 @@ serve(async (req) => {
     );
 
     // Verificar autenticação
-    const authHeader = req.headers.get("Authorization")!;
+    const authHeader = req.headers.get("Authorization");
+    if (!authHeader) {
+      throw new Error("Token de autenticação não fornecido");
+    }
+
     const token = authHeader.replace("Bearer ", "");
-    const { data } = await supabaseClient.auth.getUser(token);
+    const { data, error: authError } = await supabaseClient.auth.getUser(token);
     const user = data.user;
     
-    if (!user) {
+    if (authError || !user) {
       throw new Error("Usuário não autenticado");
     }
 
-    const { contract_id, user_message, general_chat } = await req.json();
+    // Rate limiting
+    if (!checkRateLimit(user.id, 30, 60000)) { // 30 messages per minute
+      throw new Error("Muitas mensagens enviadas. Aguarde um momento.");
+    }
 
-    if (!user_message) {
+    const requestData = await req.json();
+    const { contract_id, user_message, general_chat } = requestData;
+
+    if (!user_message || typeof user_message !== 'string') {
       throw new Error("Mensagem do usuário é obrigatória");
+    }
+
+    // Sanitizar entrada do usuário
+    const sanitizedMessage = sanitizeInput(user_message);
+    if (!sanitizedMessage) {
+      throw new Error("Mensagem inválida após sanitização");
     }
 
     // Preparar contexto
@@ -44,23 +104,30 @@ serve(async (req) => {
       Responda perguntas sobre direito de forma clara, didática e precisa.
       Sempre mencione que suas respostas são informativas e não substituem a consulta com um advogado.
       Mantenha as respostas concisas mas completas.
-      Responda sempre em português brasileiro.`;
+      Responda sempre em português brasileiro.
+      Não forneça conselhos jurídicos específicos, apenas informações gerais.`;
+
+      // Log para chat geral
+      await logAuditEvent(supabaseClient, user.id, 'general_chat_message', {
+        message_length: sanitizedMessage.length
+      });
+
     } else {
       // Chat específico sobre contrato
-      if (!contract_id) {
+      if (!contract_id || typeof contract_id !== 'string') {
         throw new Error("ID do contrato é obrigatório para chat específico");
       }
 
-      // Buscar o contrato e sua análise
+      // Buscar o contrato e sua análise com validação de propriedade
       const { data: contractData, error: contractError } = await supabaseClient
         .from('contracts')
-        .select('file_name')
+        .select('file_name, user_id')
         .eq('id', contract_id)
-        .eq('user_id', user.id)
+        .eq('user_id', user.id) // Verificar se o contrato pertence ao usuário
         .single();
 
       if (contractError || !contractData) {
-        throw new Error("Contrato não encontrado");
+        throw new Error("Contrato não encontrado ou acesso negado");
       }
 
       const { data: analysisData, error: analysisError } = await supabaseClient
@@ -78,39 +145,64 @@ serve(async (req) => {
       Responda perguntas sobre o contrato fornecido de forma clara e precisa.
       Use as informações da análise para dar respostas contextualizadas.
       Sempre mencione que suas respostas são informativas e não substituem a consulta com um advogado.
-      Responda sempre em português brasileiro.`;
+      Responda sempre em português brasileiro.
+      Não forneça conselhos jurídicos específicos, apenas interpretações das informações disponíveis.`;
+
+      // Log para chat específico
+      await logAuditEvent(supabaseClient, user.id, 'contract_chat_message', {
+        contract_id,
+        message_length: sanitizedMessage.length
+      });
     }
 
-    // Fazer chamada para OpenAI
-    const openAIResponse = await fetch('https://api.openai.com/v1/chat/completions', {
+    // Fazer chamada para Gemini
+    const geminiResponse = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=' + Deno.env.get('GEMINI_API_KEY'), {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${Deno.env.get('OPENAI_API_KEY')}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'gpt-4o-mini',
-        messages: [
+        contents: [{
+          parts: [{
+            text: `${systemPrompt}\n\n${context ? `${context}\n\n` : ''}Pergunta do usuário: ${sanitizedMessage}`
+          }]
+        }],
+        generationConfig: {
+          temperature: 0.7,
+          maxOutputTokens: 1000
+        },
+        safetySettings: [
           {
-            role: 'system',
-            content: systemPrompt
+            category: "HARM_CATEGORY_HARASSMENT",
+            threshold: "BLOCK_MEDIUM_AND_ABOVE"
           },
           {
-            role: 'user',
-            content: context ? `${context}\n\nPergunta: ${user_message}` : user_message
+            category: "HARM_CATEGORY_HATE_SPEECH",
+            threshold: "BLOCK_MEDIUM_AND_ABOVE"
+          },
+          {
+            category: "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+            threshold: "BLOCK_MEDIUM_AND_ABOVE"
+          },
+          {
+            category: "HARM_CATEGORY_DANGEROUS_CONTENT",
+            threshold: "BLOCK_MEDIUM_AND_ABOVE"
           }
-        ],
-        max_tokens: 1000,
-        temperature: 0.7,
-      }),
+        ]
+      })
     });
 
-    if (!openAIResponse.ok) {
-      throw new Error(`Erro na API OpenAI: ${openAIResponse.status}`);
+    if (!geminiResponse.ok) {
+      const errorData = await geminiResponse.text();
+      console.error('Gemini Error:', errorData);
+      throw new Error(`Erro na API Gemini: ${geminiResponse.status}`);
     }
 
-    const openAIData = await openAIResponse.json();
-    const aiResponse = openAIData.choices[0]?.message?.content || "Desculpe, não consegui processar sua pergunta.";
+    const geminiData = await geminiResponse.json();
+    const aiResponse = geminiData.candidates?.[0]?.content?.parts?.[0]?.text || "Desculpe, não consegui processar sua pergunta.";
+
+    // Sanitizar resposta da IA
+    const sanitizedResponse = sanitizeInput(aiResponse);
 
     // Salvar no histórico apenas se for chat específico de contrato
     if (!general_chat && contract_id) {
@@ -118,8 +210,8 @@ serve(async (req) => {
         .from('chat_history')
         .insert({
           contract_id,
-          user_message,
-          ai_response: aiResponse,
+          user_message: sanitizedMessage,
+          ai_response: sanitizedResponse,
           user_id: user.id
         });
 
@@ -129,7 +221,7 @@ serve(async (req) => {
     }
 
     return new Response(
-      JSON.stringify({ ai_response: aiResponse }),
+      JSON.stringify({ ai_response: sanitizedResponse }),
       {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
         status: 200,
@@ -139,7 +231,7 @@ serve(async (req) => {
   } catch (error) {
     console.error("Erro no chat:", error);
     return new Response(
-      JSON.stringify({ error: error.message }),
+      JSON.stringify({ error: error.message || "Erro interno do servidor" }),
       {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
         status: 500,
