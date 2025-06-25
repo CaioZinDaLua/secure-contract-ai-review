@@ -25,6 +25,8 @@ export const FileUploadValidator = ({ file, onValid, onInvalid }: FileUploadVali
         check: () => {
           const allowedTypes = [
             'application/pdf',
+            'application/msword',
+            'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
             'image/jpeg',
             'image/png',
             'image/jpg',
@@ -35,11 +37,11 @@ export const FileUploadValidator = ({ file, onValid, onInvalid }: FileUploadVali
           ];
           return allowedTypes.includes(file.type);
         },
-        error: "Tipo de arquivo não permitido. Use PDF, imagens (JPG/PNG) ou áudio (MP3/WAV)"
+        error: "Tipo de arquivo não permitido. Use PDF, Word, imagens (JPG/PNG) ou áudio (MP3/WAV)"
       },
       {
         check: () => {
-          const allowedExtensions = ['.pdf', '.jpg', '.jpeg', '.png', '.mp3', '.wav', '.webm', '.mp4'];
+          const allowedExtensions = ['.pdf', '.doc', '.docx', '.jpg', '.jpeg', '.png', '.mp3', '.wav', '.webm', '.mp4'];
           const fileName = file.name.toLowerCase();
           return allowedExtensions.some(ext => fileName.endsWith(ext));
         },

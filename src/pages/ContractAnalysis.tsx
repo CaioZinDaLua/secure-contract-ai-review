@@ -1,4 +1,3 @@
-
 import { useState, useEffect } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
@@ -7,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
-import { ArrowLeft, MessageCircle, FileText, Send, Zap } from "lucide-react";
+import { ArrowLeft, MessageCircle, FileText, Send, Zap, Bot } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 interface Contract {
@@ -15,6 +14,7 @@ interface Contract {
   file_name: string;
   status: string;
   created_at: string;
+  file_path: string;
 }
 
 interface Analysis {
@@ -168,6 +168,11 @@ const ContractAnalysis = () => {
     }
   };
 
+  const startChatWithDocument = () => {
+    // Navigate to dashboard chatbot with contract context
+    navigate('/dashboard?tab=chatbot&contract=' + id);
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
@@ -211,12 +216,21 @@ const ContractAnalysis = () => {
                 Análise: {contract.file_name}
               </h1>
             </div>
-            {userProfile?.plan_type === 'pro' && (
-              <div className="flex items-center bg-gradient-to-r from-yellow-400 to-orange-500 text-white px-3 py-1 rounded-full text-sm font-medium">
-                <Zap className="h-4 w-4 mr-1" />
-                PRO
-              </div>
-            )}
+            <div className="flex items-center space-x-2">
+              <Button 
+                onClick={startChatWithDocument}
+                className="bg-blue-600 hover:bg-blue-700 text-white"
+              >
+                <Bot className="h-4 w-4 mr-2" />
+                Conversar com IA sobre este documento
+              </Button>
+              {userProfile?.plan_type === 'pro' && (
+                <div className="flex items-center bg-gradient-to-r from-yellow-400 to-orange-500 text-white px-3 py-1 rounded-full text-sm font-medium">
+                  <Zap className="h-4 w-4 mr-1" />
+                  PRO
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </div>
@@ -238,14 +252,24 @@ const ContractAnalysis = () => {
             <Card>
               <CardHeader>
                 <CardTitle>Resultado da Análise Jurídica</CardTitle>
-                <CardDescription>
-                  Análise realizada em {new Date(analysis.analysis_result.analyzed_at).toLocaleDateString('pt-BR')}
+                <CardDescription className="flex items-center justify-between">
+                  <span>
+                    Análise realizada em {analysis ? new Date(analysis.analysis_result.analyzed_at).toLocaleDateString('pt-BR') : 'Carregando...'}
+                  </span>
+                  <Button 
+                    onClick={startChatWithDocument}
+                    variant="outline"
+                    size="sm"
+                  >
+                    <Bot className="h-4 w-4 mr-2" />
+                    Conversar sobre este documento
+                  </Button>
                 </CardDescription>
               </CardHeader>
               <CardContent>
                 <div className="prose max-w-none">
                   <pre className="whitespace-pre-wrap font-sans text-sm leading-relaxed">
-                    {analysis.analysis_result.summary}
+                    {analysis?.analysis_result.summary || 'Carregando análise...'}
                   </pre>
                 </div>
               </CardContent>

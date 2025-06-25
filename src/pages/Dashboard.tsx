@@ -1,3 +1,4 @@
+
 import { useState, useEffect } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
@@ -156,7 +157,7 @@ const Dashboard = () => {
       return;
     }
 
-    // Use the file validator
+    // Validate file using the validator component
     const handleValidFile = async (validatedFile: File) => {
       setIsUploading(true);
       console.log('Starting file upload...');
@@ -164,7 +165,7 @@ const Dashboard = () => {
       try {
         // Upload file to storage first
         const fileExt = validatedFile.name.split('.').pop();
-        const sanitizedFileName = validatedFile.name.replace(/[<>:"/\\|?*]/g, '_'); // Sanitizar nome
+        const sanitizedFileName = validatedFile.name.replace(/[<>:"/\\|?*]/g, '_');
         const fileName = `${Date.now()}_${sanitizedFileName}`;
         const filePath = `${user!.id}/${fileName}`;
 
@@ -173,7 +174,7 @@ const Dashboard = () => {
           .from('contract-uploads')
           .upload(filePath, validatedFile, {
             cacheControl: '3600',
-            upsert: false // Não sobrescrever arquivos existentes
+            upsert: false
           });
 
         if (uploadError) {
@@ -241,8 +242,8 @@ const Dashboard = () => {
       event.target.value = '';
     };
 
-    // Validate file using the validator component
-    return <FileUploadValidator 
+    // Create validator instance and execute validation
+    const validator = <FileUploadValidator 
       file={file}
       onValid={handleValidFile}
       onInvalid={handleInvalidFile}
@@ -352,7 +353,7 @@ const Dashboard = () => {
                       <p className="mb-2 text-sm text-gray-500">
                         <span className="font-semibold">Clique para enviar</span> ou arraste e solte
                       </p>
-                      <p className="text-xs text-gray-500">PDF, Imagens (JPG/PNG) ou Áudio (MP3/WAV) - MAX. 10MB</p>
+                      <p className="text-xs text-gray-500">PDF, Word, Imagens (JPG/PNG) ou Áudio (MP3/WAV) - MAX. 10MB</p>
                       <p className="text-xs text-red-500 mt-1">
                         ⚠️ Arquivos são validados por segurança
                       </p>
@@ -360,7 +361,7 @@ const Dashboard = () => {
                     <Input
                       id="contract-upload"
                       type="file"
-                      accept=".pdf,.jpg,.jpeg,.png,.mp3,.wav,.webm,.mp4"
+                      accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.mp3,.wav,.webm,.mp4"
                       className="hidden"
                       onChange={handleFileUpload}
                       disabled={isUploading}

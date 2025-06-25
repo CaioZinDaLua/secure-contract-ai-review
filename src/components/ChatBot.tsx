@@ -3,15 +3,19 @@ import { useState } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
-import { Send, MessageCircle, Bot, User } from "lucide-react";
+import { Send, MessageCircle, Bot, User, Paperclip, Upload } from "lucide-react";
+import FileUploadValidator from "./FileUploadValidator";
 
 interface ChatMessage {
   id: string;
   type: 'user' | 'ai';
   message: string;
   timestamp: Date;
+  hasFile?: boolean;
+  fileName?: string;
 }
 
 const ChatBot = () => {
@@ -19,28 +23,89 @@ const ChatBot = () => {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [newMessage, setNewMessage] = useState("");
   const [isSending, setIsSending] = useState(false);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+
+  const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    const handleValidFile = (validatedFile: File) => {
+      setSelectedFile(validatedFile);
+      toast({
+        title: "Arquivo selecionado",
+        description: `${validatedFile.name} está pronto para envio`,
+      });
+    };
+
+    const handleInvalidFile = (error: string) => {
+      console.error('File validation failed:', error);
+      event.target.value = '';
+    };
+
+    // Validate file
+    return <FileUploadValidator 
+      file={file}
+      onValid={handleValidFile}
+      onInvalid={handleInvalidFile}
+    />;
+  };
+
+  const removeFile = () => {
+    setSelectedFile(null);
+  };
 
   const sendMessage = async () => {
-    if (!newMessage.trim() || isSending) return;
+    if ((!newMessage.trim() && !selectedFile) || isSending) return;
 
     const messageToSend = newMessage.trim();
+    const fileToSend = selectedFile;
+    
+    // Create user message
     const userMessage: ChatMessage = {
       id: Date.now().toString(),
       type: 'user',
-      message: messageToSend,
-      timestamp: new Date()
+      message: messageToSend || "Arquivo enviado para análise",
+      timestamp: new Date(),
+      hasFile: !!fileToSend,
+      fileName: fileToSend?.name
     };
 
     setMessages(prev => [...prev, userMessage]);
     setNewMessage("");
+    setSelectedFile(null);
     setIsSending(true);
 
     try {
-      const { data, error } = await supabase.functions.invoke('chat-with-contract', {
-        body: {
-          user_message: messageToSend,
-          general_chat: true
+      let requestBody: any = {
+        user_message: messageToSend,
+        general_chat: true
+      };
+
+      // If there's a file, upload it first and include in the request
+      if (fileToSend) {
+        const sanitizedFileName = fileToSend.name.replace(/[<>:"/\\|?*]/g, '_');
+        const fileName = `chat_${Date.now()}_${sanitizedFileName}`;
+        const filePath = `chat-uploads/${fileName}`;
+
+        // Upload file to storage
+        const { error: uploadError } = await supabase.storage
+          .from('contract-uploads')
+          .upload(filePath, fileToSend, {
+            cacheControl: '3600',
+            upsert: false
+          });
+
+        if (uploadError) {
+          throw new Error(`Erro no upload: ${uploadError.message}`);
         }
+
+        requestBody.file_path = filePath;
+        requestBody.file_name = sanitizedFileName;
+        requestBody.user_message = messageToSend || `Analise este arquivo: ${sanitizedFileName}`;
+      }
+
+      const { data, error } = await supabase.functions.invoke('chat-with-contract', {
+        body: requestBody
       });
 
       if (error) {
@@ -88,7 +153,7 @@ const ChatBot = () => {
             Chat com IA Jurídica
           </CardTitle>
           <CardDescription>
-            Faça perguntas sobre direito, contratos e questões jurídicas em geral
+            Faça perguntas sobre direito, contratos e questões jurídicas. Agora com suporte a arquivos!
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -97,7 +162,7 @@ const ChatBot = () => {
               <Bot className="h-12 w-12 text-gray-400 mx-auto mb-4" />
               <p className="text-gray-500">Olá! Sou sua assistente jurídica virtual.</p>
               <p className="text-sm text-gray-400 mt-2">
-                Faça uma pergunta sobre direito ou questões jurídicas para começar nossa conversa!
+                Faça uma pergunta sobre direito, envie um documento para análise ou combine ambos!
               </p>
             </div>
           ) : (
@@ -124,6 +189,12 @@ const ChatBot = () => {
                         {message.type === 'user' ? 'Você' : 'IA Jurídica'}
                       </p>
                       <p className="whitespace-pre-wrap">{message.message}</p>
+                      {message.hasFile && (
+                        <div className="mt-2 flex items-center text-sm opacity-75">
+                          <Paperclip className="h-3 w-3 mr-1" />
+                          {message.fileName}
+                        </div>
+                      )}
                       <p className={`text-xs mt-1 ${
                         message.type === 'user' ? 'text-blue-100' : 'text-gray-500'
                       }`}>
@@ -159,9 +230,55 @@ const ChatBot = () => {
       {/* Message Input */}
       <Card>
         <CardContent className="pt-6">
+          {/* File Upload Area */}
+          <div className="mb-4">
+            <div className="flex items-center justify-between mb-2">
+              <label className="text-sm font-medium text-gray-700">
+                Anexar arquivo (opcional)
+              </label>
+              {selectedFile && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={removeFile}
+                  className="text-red-500 hover:text-red-700"
+                >
+                  Remover
+                </Button>
+              )}
+            </div>
+            
+            {selectedFile ? (
+              <div className="flex items-center p-3 bg-blue-50 rounded-lg border">
+                <Paperclip className="h-4 w-4 text-blue-500 mr-2" />
+                <span className="text-sm text-blue-700">{selectedFile.name}</span>
+              </div>
+            ) : (
+              <div className="border-2 border-dashed border-gray-300 rounded-lg p-4 text-center hover:border-gray-400 transition-colors">
+                <label htmlFor="chat-file-upload" className="cursor-pointer">
+                  <Upload className="h-6 w-6 text-gray-400 mx-auto mb-2" />
+                  <p className="text-sm text-gray-600">
+                    Clique para anexar PDF, Word, imagem ou áudio
+                  </p>
+                  <p className="text-xs text-gray-400 mt-1">
+                    Máximo 10MB
+                  </p>
+                </label>
+                <Input
+                  id="chat-file-upload"
+                  type="file"
+                  accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.mp3,.wav,.webm,.mp4"
+                  className="hidden"
+                  onChange={handleFileUpload}
+                />
+              </div>
+            )}
+          </div>
+
+          {/* Message Input */}
           <div className="flex space-x-2">
             <Textarea
-              placeholder="Digite sua pergunta jurídica aqui..."
+              placeholder="Digite sua pergunta jurídica ou descreva o que quer saber sobre o arquivo..."
               value={newMessage}
               onChange={(e) => setNewMessage(e.target.value)}
               disabled={isSending}
@@ -175,7 +292,7 @@ const ChatBot = () => {
             />
             <Button
               onClick={sendMessage}
-              disabled={!newMessage.trim() || isSending}
+              disabled={(!newMessage.trim() && !selectedFile) || isSending}
               className="self-end"
             >
               {isSending ? (
