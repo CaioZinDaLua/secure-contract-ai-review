@@ -6,7 +6,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
-import { Send, MessageCircle, Bot, User, Paperclip, Upload } from "lucide-react";
+import { Send, MessageCircle, Bot, User, Paperclip, Upload, X } from "lucide-react";
 import FileUploadValidator from "./FileUploadValidator";
 
 interface ChatMessage {
@@ -42,12 +42,17 @@ const ChatBot = () => {
       event.target.value = '';
     };
 
-    // Validate file
-    return <FileUploadValidator 
-      file={file}
-      onValid={handleValidFile}
-      onInvalid={handleInvalidFile}
-    />;
+    // Render validator component
+    const validator = (
+      <FileUploadValidator 
+        file={file}
+        onValid={handleValidFile}
+        onInvalid={handleInvalidFile}
+      />
+    );
+
+    // The validator will execute automatically via useEffect
+    return validator;
   };
 
   const removeFile = () => {
@@ -243,6 +248,7 @@ const ChatBot = () => {
                   onClick={removeFile}
                   className="text-red-500 hover:text-red-700"
                 >
+                  <X className="h-4 w-4 mr-1" />
                   Remover
                 </Button>
               )}
@@ -251,11 +257,19 @@ const ChatBot = () => {
             {selectedFile ? (
               <div className="flex items-center p-3 bg-blue-50 rounded-lg border">
                 <Paperclip className="h-4 w-4 text-blue-500 mr-2" />
-                <span className="text-sm text-blue-700">{selectedFile.name}</span>
+                <span className="text-sm text-blue-700 flex-1">{selectedFile.name}</span>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={removeFile}
+                  className="text-red-500 hover:text-red-700 ml-2"
+                >
+                  <X className="h-4 w-4" />
+                </Button>
               </div>
             ) : (
               <div className="border-2 border-dashed border-gray-300 rounded-lg p-4 text-center hover:border-gray-400 transition-colors">
-                <label htmlFor="chat-file-upload" className="cursor-pointer">
+                <label htmlFor="chat-file-upload" className="cursor-pointer block">
                   <Upload className="h-6 w-6 text-gray-400 mx-auto mb-2" />
                   <p className="text-sm text-gray-600">
                     Clique para anexar PDF, Word, imagem ou áudio

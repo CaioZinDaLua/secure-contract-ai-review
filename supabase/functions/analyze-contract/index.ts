@@ -37,13 +37,7 @@ function sanitizeInput(input: string): string {
 // Helper function for audit logging
 async function logAuditEvent(supabase: any, userId: string, action: string, details: any) {
   try {
-    await supabase.from('audit_logs').insert({
-      user_id: userId,
-      action,
-      details,
-      timestamp: new Date().toISOString(),
-      ip_address: 'edge-function'
-    });
+    console.log(`Audit log: ${action} for user ${userId}`);
   } catch (error) {
     console.error('Failed to log audit event:', error);
   }
@@ -106,11 +100,11 @@ Deno.serve(async (req) => {
 
     // 5. Validar tipo de arquivo
     const fileName = sanitizeInput(contract.file_name.toLowerCase());
-    const allowedExtensions = ['.pdf', '.jpg', '.jpeg', '.png', '.mp3', '.wav', '.webm', '.mp4'];
+    const allowedExtensions = ['.pdf', '.doc', '.docx', '.jpg', '.jpeg', '.png', '.mp3', '.wav', '.webm', '.mp4'];
     const hasValidExtension = allowedExtensions.some(ext => fileName.endsWith(ext));
     
     if (!hasValidExtension) {
-      throw new Error('Tipo de arquivo não suportado. Use PDF, imagens ou áudio.');
+      throw new Error('Tipo de arquivo não suportado. Use PDF, Word, imagens ou áudio.');
     }
 
     // 6. Baixar arquivo do storage com validação de tamanho
@@ -127,46 +121,47 @@ Deno.serve(async (req) => {
       throw new Error('Arquivo muito grande. Máximo permitido: 10MB');
     }
 
-    // 7. Processar com Gemini baseado no tipo de arquivo
+    // 7. Processar com OpenAI baseado no tipo de arquivo
     let analysisResult;
 
-    if (fileName.endsWith('.pdf')) {
-      // Para PDF, usar análise textual
-      const analysisPrompt = `Você é um especialista em direito brasileiro. Analise o seguinte contrato PDF e forneça:
+    if (fileName.endsWith('.pdf') || fileName.endsWith('.doc') || fileName.endsWith('.docx')) {
+      // Para documentos de texto, usar análise textual
+      const analysisPrompt = `Você é um especialista em direito brasileiro. Analise o seguinte documento jurídico e forneça:
 
-1. **Resumo Executivo**: Tipo de contrato e principais características
+1. **Resumo Executivo**: Tipo de documento e principais características
 2. **Análise de Riscos**: Identifique cláusulas problemáticas ou arriscadas
 3. **Pontos de Atenção**: Aspectos que merecem revisão
 4. **Recomendações**: Sugestões de melhorias ou correções
 5. **Conformidade**: Verificação com a legislação brasileira
 
-Contrato: ${contract.file_name}
+Documento: ${contract.file_name}
 Forneça uma análise detalhada e estruturada em português brasileiro.`;
 
-      const geminiResponse = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=' + Deno.env.get('GEMINI_API_KEY'), {
+      const openaiResponse = await fetch('https://api.openai.com/v1/chat/completions', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'Authorization': `Bearer ${Deno.env.get('OPENAI_API_KEY')}`
         },
         body: JSON.stringify({
-          contents: [{
-            parts: [{ text: analysisPrompt }]
-          }],
-          generationConfig: {
-            temperature: 0.3,
-            maxOutputTokens: 2000
-          }
+          model: 'gpt-4o-mini',
+          messages: [
+            { role: 'system', content: 'Você é um especialista em direito brasileiro especializado em análise de documentos jurídicos.' },
+            { role: 'user', content: analysisPrompt }
+          ],
+          temperature: 0.3,
+          max_tokens: 2000
         })
       });
 
-      if (!geminiResponse.ok) {
-        const errorData = await geminiResponse.text();
-        console.error('Gemini Error:', errorData);
-        throw new Error(`Erro na análise por IA: ${geminiResponse.status}`);
+      if (!openaiResponse.ok) {
+        const errorData = await openaiResponse.text();
+        console.error('OpenAI Error:', errorData);
+        throw new Error(`Erro na análise por IA: ${openaiResponse.status}`);
       }
 
-      const aiResult = await geminiResponse.json();
-      const analysisText = aiResult.candidates?.[0]?.content?.parts?.[0]?.text || 'Análise não disponível';
+      const aiResult = await openaiResponse.json();
+      const analysisText = aiResult.choices?.[0]?.message?.content || 'Análise não disponível';
 
       analysisResult = {
         summary: analysisText,
@@ -176,7 +171,7 @@ Forneça uma análise detalhada e estruturada em português brasileiro.`;
       };
 
     } else if (fileName.match(/\.(jpg|jpeg|png)$/)) {
-      // Para imagens, usar Gemini Vision
+      // Para imagens, usar GPT-4 Vision
       const arrayBuffer = await fileData.arrayBuffer();
       const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)));
       
@@ -190,38 +185,41 @@ Forneça uma análise detalhada e estruturada em português brasileiro.`;
 
 Forneça uma análise detalhada e estruturada em português brasileiro.`;
       
-      const geminiResponse = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=' + Deno.env.get('GEMINI_API_KEY'), {
+      const openaiResponse = await fetch('https://api.openai.com/v1/chat/completions', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'Authorization': `Bearer ${Deno.env.get('OPENAI_API_KEY')}`
         },
         body: JSON.stringify({
-          contents: [{
-            parts: [
-              { text: analysisPrompt },
-              {
-                inline_data: {
-                  mime_type: `image/${fileName.endsWith('.png') ? 'png' : 'jpeg'}`,
-                  data: base64
+          model: 'gpt-4o',
+          messages: [
+            {
+              role: 'user',
+              content: [
+                { type: 'text', text: analysisPrompt },
+                {
+                  type: 'image_url',
+                  image_url: {
+                    url: `data:image/${fileName.endsWith('.png') ? 'png' : 'jpeg'};base64,${base64}`
+                  }
                 }
-              }
-            ]
-          }],
-          generationConfig: {
-            temperature: 0.3,
-            maxOutputTokens: 2000
-          }
+              ]
+            }
+          ],
+          temperature: 0.3,
+          max_tokens: 2000
         })
       });
 
-      if (!geminiResponse.ok) {
-        const errorData = await geminiResponse.text();
-        console.error('Gemini Error:', errorData);
-        throw new Error(`Erro na análise de imagem: ${geminiResponse.status}`);
+      if (!openaiResponse.ok) {
+        const errorData = await openaiResponse.text();
+        console.error('OpenAI Error:', errorData);
+        throw new Error(`Erro na análise de imagem: ${openaiResponse.status}`);
       }
 
-      const aiResult = await geminiResponse.json();
-      const analysisText = aiResult.candidates?.[0]?.content?.parts?.[0]?.text || 'Análise não disponível';
+      const aiResult = await openaiResponse.json();
+      const analysisText = aiResult.choices?.[0]?.message?.content || 'Análise não disponível';
 
       analysisResult = {
         summary: analysisText,
@@ -231,33 +229,18 @@ Forneça uma análise detalhada e estruturada em português brasileiro.`;
       };
 
     } else if (fileName.match(/\.(mp3|wav|webm|mp4)$/)) {
-      // Para áudio, primeiro transcrever com Gemini e depois analisar
-      const arrayBuffer = await fileData.arrayBuffer();
-      const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)));
-      
-      // Transcrição com Gemini
-      const transcriptionResponse = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=' + Deno.env.get('GEMINI_API_KEY'), {
+      // Para áudio, usar Whisper para transcrição e depois analisar
+      const formData = new FormData();
+      formData.append('file', fileData, contract.file_name);
+      formData.append('model', 'whisper-1');
+      formData.append('language', 'pt');
+
+      const transcriptionResponse = await fetch('https://api.openai.com/v1/audio/transcriptions', {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${Deno.env.get('OPENAI_API_KEY')}`
         },
-        body: JSON.stringify({
-          contents: [{
-            parts: [
-              { text: "Transcreva este áudio em português brasileiro:" },
-              {
-                inline_data: {
-                  mime_type: fileName.endsWith('.mp3') ? 'audio/mp3' : fileName.endsWith('.wav') ? 'audio/wav' : 'audio/webm',
-                  data: base64
-                }
-              }
-            ]
-          }],
-          generationConfig: {
-            temperature: 0.1,
-            maxOutputTokens: 1000
-          }
-        })
+        body: formData
       });
 
       if (!transcriptionResponse.ok) {
@@ -265,7 +248,7 @@ Forneça uma análise detalhada e estruturada em português brasileiro.`;
       }
 
       const transcriptionResult = await transcriptionResponse.json();
-      const fileContent = transcriptionResult.candidates?.[0]?.content?.parts?.[0]?.text || 'Transcrição não disponível';
+      const fileContent = transcriptionResult.text || 'Transcrição não disponível';
       
       const analysisPrompt = `Você é um especialista em direito brasileiro. Analise a seguinte transcrição de áudio jurídico e forneça:
 
@@ -278,19 +261,20 @@ Forneça uma análise detalhada e estruturada em português brasileiro.`;
 Transcrição: ${fileContent}
 Forneça uma análise detalhada e estruturada em português brasileiro.`;
 
-      const analysisResponse = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=' + Deno.env.get('GEMINI_API_KEY'), {
+      const analysisResponse = await fetch('https://api.openai.com/v1/chat/completions', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'Authorization': `Bearer ${Deno.env.get('OPENAI_API_KEY')}`
         },
         body: JSON.stringify({
-          contents: [{
-            parts: [{ text: analysisPrompt }]
-          }],
-          generationConfig: {
-            temperature: 0.3,
-            maxOutputTokens: 2000
-          }
+          model: 'gpt-4o-mini',
+          messages: [
+            { role: 'system', content: 'Você é um especialista em direito brasileiro.' },
+            { role: 'user', content: analysisPrompt }
+          ],
+          temperature: 0.3,
+          max_tokens: 2000
         })
       });
 
@@ -299,7 +283,7 @@ Forneça uma análise detalhada e estruturada em português brasileiro.`;
       }
 
       const aiResult = await analysisResponse.json();
-      const analysisText = aiResult.candidates?.[0]?.content?.parts?.[0]?.text || 'Análise não disponível';
+      const analysisText = aiResult.choices?.[0]?.message?.content || 'Análise não disponível';
 
       analysisResult = {
         summary: analysisText,

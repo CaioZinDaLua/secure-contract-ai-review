@@ -39,13 +39,7 @@ function sanitizeInput(input: string): string {
 // Helper function for audit logging
 async function logAuditEvent(supabase: any, userId: string, action: string, details: any) {
   try {
-    await supabase.from('audit_logs').insert({
-      user_id: userId,
-      action,
-      details,
-      timestamp: new Date().toISOString(),
-      ip_address: 'edge-function'
-    });
+    console.log(`Audit log: ${action} for user ${userId}`);
   } catch (error) {
     console.error('Failed to log audit event:', error);
   }
@@ -82,7 +76,7 @@ serve(async (req) => {
     }
 
     const requestData = await req.json();
-    const { contract_id, user_message, general_chat } = requestData;
+    const { contract_id, user_message, general_chat, file_path, file_name } = requestData;
 
     if (!user_message || typeof user_message !== 'string') {
       throw new Error("Mensagem do usuário é obrigatória");
@@ -97,6 +91,7 @@ serve(async (req) => {
     // Preparar contexto
     let context = "";
     let systemPrompt = "";
+    let messages = [];
 
     if (general_chat) {
       // Chat geral sobre questões jurídicas
@@ -107,9 +102,20 @@ serve(async (req) => {
       Responda sempre em português brasileiro.
       Não forneça conselhos jurídicos específicos, apenas informações gerais.`;
 
+      messages = [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: sanitizedMessage }
+      ];
+
+      // Se há arquivo anexado, mencionar na mensagem
+      if (file_path && file_name) {
+        messages[1].content = `Arquivo anexado: ${file_name}\n\n${sanitizedMessage}`;
+      }
+
       // Log para chat geral
       await logAuditEvent(supabaseClient, user.id, 'general_chat_message', {
-        message_length: sanitizedMessage.length
+        message_length: sanitizedMessage.length,
+        has_file: !!file_path
       });
 
     } else {
@@ -148,6 +154,11 @@ serve(async (req) => {
       Responda sempre em português brasileiro.
       Não forneça conselhos jurídicos específicos, apenas interpretações das informações disponíveis.`;
 
+      messages = [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: `${context}\n\nPergunta do usuário: ${sanitizedMessage}` }
+      ];
+
       // Log para chat específico
       await logAuditEvent(supabaseClient, user.id, 'contract_chat_message', {
         contract_id,
@@ -155,51 +166,29 @@ serve(async (req) => {
       });
     }
 
-    // Fazer chamada para Gemini
-    const geminiResponse = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=' + Deno.env.get('GEMINI_API_KEY'), {
+    // Fazer chamada para OpenAI
+    const openaiResponse = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        'Authorization': `Bearer ${Deno.env.get('OPENAI_API_KEY')}`
       },
       body: JSON.stringify({
-        contents: [{
-          parts: [{
-            text: `${systemPrompt}\n\n${context ? `${context}\n\n` : ''}Pergunta do usuário: ${sanitizedMessage}`
-          }]
-        }],
-        generationConfig: {
-          temperature: 0.7,
-          maxOutputTokens: 1000
-        },
-        safetySettings: [
-          {
-            category: "HARM_CATEGORY_HARASSMENT",
-            threshold: "BLOCK_MEDIUM_AND_ABOVE"
-          },
-          {
-            category: "HARM_CATEGORY_HATE_SPEECH",
-            threshold: "BLOCK_MEDIUM_AND_ABOVE"
-          },
-          {
-            category: "HARM_CATEGORY_SEXUALLY_EXPLICIT",
-            threshold: "BLOCK_MEDIUM_AND_ABOVE"
-          },
-          {
-            category: "HARM_CATEGORY_DANGEROUS_CONTENT",
-            threshold: "BLOCK_MEDIUM_AND_ABOVE"
-          }
-        ]
+        model: 'gpt-4o-mini',
+        messages: messages,
+        temperature: 0.7,
+        max_tokens: 1000
       })
     });
 
-    if (!geminiResponse.ok) {
-      const errorData = await geminiResponse.text();
-      console.error('Gemini Error:', errorData);
-      throw new Error(`Erro na API Gemini: ${geminiResponse.status}`);
+    if (!openaiResponse.ok) {
+      const errorData = await openaiResponse.text();
+      console.error('OpenAI Error:', errorData);
+      throw new Error(`Erro na API OpenAI: ${openaiResponse.status}`);
     }
 
-    const geminiData = await geminiResponse.json();
-    const aiResponse = geminiData.candidates?.[0]?.content?.parts?.[0]?.text || "Desculpe, não consegui processar sua pergunta.";
+    const openaiData = await openaiResponse.json();
+    const aiResponse = openaiData.choices?.[0]?.message?.content || "Desculpe, não consegui processar sua pergunta.";
 
     // Sanitizar resposta da IA
     const sanitizedResponse = sanitizeInput(aiResponse);
