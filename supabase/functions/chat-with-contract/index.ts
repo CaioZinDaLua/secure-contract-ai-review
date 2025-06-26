@@ -56,6 +56,12 @@ serve(async (req) => {
       Deno.env.get("SUPABASE_ANON_KEY") ?? ""
     );
 
+    // Verificar se a chave OpenAI está configurada
+    const openaiKey = Deno.env.get('OPENAI_API_KEY');
+    if (!openaiKey || openaiKey.trim() === '') {
+      throw new Error('Serviço temporariamente indisponível. Entre em contato com o suporte.');
+    }
+
     // Verificar autenticação
     const authHeader = req.headers.get("Authorization");
     if (!authHeader) {
@@ -171,7 +177,7 @@ serve(async (req) => {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${Deno.env.get('OPENAI_API_KEY')}`
+        'Authorization': `Bearer ${openaiKey}`
       },
       body: JSON.stringify({
         model: 'gpt-4o-mini',
@@ -184,7 +190,14 @@ serve(async (req) => {
     if (!openaiResponse.ok) {
       const errorData = await openaiResponse.text();
       console.error('OpenAI Error:', errorData);
-      throw new Error(`Erro na API OpenAI: ${openaiResponse.status}`);
+      
+      if (openaiResponse.status === 401) {
+        throw new Error('Serviço temporariamente indisponível. Entre em contato com o suporte.');
+      } else if (openaiResponse.status === 429) {
+        throw new Error('Limite de uso atingido. Tente novamente em alguns minutos.');
+      } else {
+        throw new Error(`Erro no processamento. Tente novamente em alguns minutos.`);
+      }
     }
 
     const openaiData = await openaiResponse.json();

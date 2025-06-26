@@ -61,14 +61,23 @@ Deno.serve(async (req) => {
     Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
   );
 
+  let contract_id: string | undefined;
+
   try {
-    const { contract_id } = await req.json();
+    const requestBody = await req.json();
+    contract_id = requestBody.contract_id;
     
     if (!contract_id || typeof contract_id !== 'string') {
       throw new Error('ID do contrato é obrigatório e deve ser uma string válida');
     }
 
     console.log('Iniciando análise do contrato:', contract_id);
+
+    // Verificar se a chave OpenAI está configurada
+    const openaiKey = Deno.env.get('OPENAI_API_KEY');
+    if (!openaiKey || openaiKey.trim() === '') {
+      throw new Error('Chave da API OpenAI não configurada. Entre em contato com o suporte.');
+    }
 
     // 1. Buscar informações do contrato com validação
     const { data: contract, error: contractError } = await supabaseAdmin
@@ -141,7 +150,7 @@ Forneça uma análise detalhada e estruturada em português brasileiro.`;
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${Deno.env.get('OPENAI_API_KEY')}`
+          'Authorization': `Bearer ${openaiKey}`
         },
         body: JSON.stringify({
           model: 'gpt-4o-mini',
@@ -157,7 +166,14 @@ Forneça uma análise detalhada e estruturada em português brasileiro.`;
       if (!openaiResponse.ok) {
         const errorData = await openaiResponse.text();
         console.error('OpenAI Error:', errorData);
-        throw new Error(`Erro na análise por IA: ${openaiResponse.status}`);
+        
+        if (openaiResponse.status === 401) {
+          throw new Error('Chave da API OpenAI inválida. Entre em contato com o suporte.');
+        } else if (openaiResponse.status === 429) {
+          throw new Error('Limite de uso da API atingido. Tente novamente mais tarde.');
+        } else {
+          throw new Error(`Erro na análise por IA. Tente novamente em alguns minutos.`);
+        }
       }
 
       const aiResult = await openaiResponse.json();
@@ -189,7 +205,7 @@ Forneça uma análise detalhada e estruturada em português brasileiro.`;
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${Deno.env.get('OPENAI_API_KEY')}`
+          'Authorization': `Bearer ${openaiKey}`
         },
         body: JSON.stringify({
           model: 'gpt-4o',
@@ -215,7 +231,14 @@ Forneça uma análise detalhada e estruturada em português brasileiro.`;
       if (!openaiResponse.ok) {
         const errorData = await openaiResponse.text();
         console.error('OpenAI Error:', errorData);
-        throw new Error(`Erro na análise de imagem: ${openaiResponse.status}`);
+        
+        if (openaiResponse.status === 401) {
+          throw new Error('Chave da API OpenAI inválida. Entre em contato com o suporte.');
+        } else if (openaiResponse.status === 429) {
+          throw new Error('Limite de uso da API atingido. Tente novamente mais tarde.');
+        } else {
+          throw new Error(`Erro na análise de imagem. Tente novamente em alguns minutos.`);
+        }
       }
 
       const aiResult = await openaiResponse.json();
@@ -238,13 +261,19 @@ Forneça uma análise detalhada e estruturada em português brasileiro.`;
       const transcriptionResponse = await fetch('https://api.openai.com/v1/audio/transcriptions', {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${Deno.env.get('OPENAI_API_KEY')}`
+          'Authorization': `Bearer ${openaiKey}`
         },
         body: formData
       });
 
       if (!transcriptionResponse.ok) {
-        throw new Error(`Erro na transcrição do áudio: ${transcriptionResponse.status}`);
+        if (transcriptionResponse.status === 401) {
+          throw new Error('Chave da API OpenAI inválida. Entre em contato com o suporte.');
+        } else if (transcriptionResponse.status === 429) {
+          throw new Error('Limite de uso da API atingido. Tente novamente mais tarde.');
+        } else {
+          throw new Error(`Erro na transcrição do áudio. Tente novamente em alguns minutos.`);
+        }
       }
 
       const transcriptionResult = await transcriptionResponse.json();
@@ -265,7 +294,7 @@ Forneça uma análise detalhada e estruturada em português brasileiro.`;
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${Deno.env.get('OPENAI_API_KEY')}`
+          'Authorization': `Bearer ${openaiKey}`
         },
         body: JSON.stringify({
           model: 'gpt-4o-mini',
@@ -279,7 +308,13 @@ Forneça uma análise detalhada e estruturada em português brasileiro.`;
       });
 
       if (!analysisResponse.ok) {
-        throw new Error(`Erro na análise de transcrição: ${analysisResponse.status}`);
+        if (analysisResponse.status === 401) {
+          throw new Error('Chave da API OpenAI inválida. Entre em contato com o suporte.');
+        } else if (analysisResponse.status === 429) {
+          throw new Error('Limite de uso da API atingido. Tente novamente mais tarde.');
+        } else {
+          throw new Error(`Erro na análise de transcrição. Tente novamente em alguns minutos.`);
+        }
       }
 
       const aiResult = await analysisResponse.json();
@@ -321,9 +356,6 @@ Forneça uma análise detalhada e estruturada em português brasileiro.`;
     
     // Atualizar status para 'error' em caso de falha
     try {
-      const requestBody = await req.clone().json();
-      const { contract_id } = requestBody;
-      
       if (contract_id) {
         await supabaseAdmin
           .from('contracts')
