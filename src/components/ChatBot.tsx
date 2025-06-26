@@ -1,4 +1,3 @@
-
 import { useState } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -7,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 import { Send, MessageCircle, Bot, User, Paperclip, Upload, X } from "lucide-react";
+import { validateFile, sanitizeFileName } from "@/utils/fileUtils";
 
 interface ChatMessage {
   id: string;
@@ -16,73 +16,6 @@ interface ChatMessage {
   hasFile?: boolean;
   fileName?: string;
 }
-
-const validateFile = (file: File): { isValid: boolean; error?: string } => {
-  // Validações de segurança
-  const validations = [
-    {
-      check: () => file.size <= 10 * 1024 * 1024, // 10MB
-      error: "Arquivo muito grande. Máximo permitido: 10MB"
-    },
-    {
-      check: () => file.size > 0,
-      error: "Arquivo está vazio"
-    },
-    {
-      check: () => {
-        const allowedTypes = [
-          'application/pdf',
-          'application/msword',
-          'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-          'image/jpeg',
-          'image/png',
-          'image/jpg',
-          'audio/mpeg',
-          'audio/wav',
-          'audio/webm',
-          'audio/mp4'
-        ];
-        return allowedTypes.includes(file.type);
-      },
-      error: "Tipo de arquivo não permitido. Use PDF, Word, imagens (JPG/PNG) ou áudio (MP3/WAV)"
-    },
-    {
-      check: () => {
-        const allowedExtensions = ['.pdf', '.doc', '.docx', '.jpg', '.jpeg', '.png', '.mp3', '.wav', '.webm', '.mp4'];
-        const fileName = file.name.toLowerCase();
-        return allowedExtensions.some(ext => fileName.endsWith(ext));
-      },
-      error: "Extensão de arquivo não permitida"
-    },
-    {
-      check: () => {
-        // Verificar se o nome do arquivo contém caracteres suspeitos
-        const suspiciousPatterns = [
-          /<script/i,
-          /javascript:/i,
-          /on\w+=/i,
-          /\.\./,
-          /[<>]/
-        ];
-        return !suspiciousPatterns.some(pattern => pattern.test(file.name));
-      },
-      error: "Nome do arquivo contém caracteres não permitidos"
-    },
-    {
-      check: () => file.name.length <= 255,
-      error: "Nome do arquivo muito longo (máximo 255 caracteres)"
-    }
-  ];
-
-  // Executar todas as validações
-  for (const validation of validations) {
-    if (!validation.check()) {
-      return { isValid: false, error: validation.error };
-    }
-  }
-
-  return { isValid: true };
-};
 
 const ChatBot = () => {
   const { toast } = useToast();
@@ -148,8 +81,10 @@ const ChatBot = () => {
 
       // If there's a file, upload it first and include in the request
       if (fileToSend) {
-        const sanitizedFileName = fileToSend.name.replace(/[<>:"/\\|?*]/g, '_');
-        const fileName = `chat_${Date.now()}_${sanitizedFileName}`;
+        const fileExt = fileToSend.name.split('.').pop() || '';
+        const baseName = fileToSend.name.replace(`.${fileExt}`, '');
+        const sanitizedBaseName = sanitizeFileName(baseName);
+        const fileName = `chat_${Date.now()}_${sanitizedBaseName}.${fileExt.toLowerCase()}`;
         const filePath = `chat-uploads/${fileName}`;
 
         // Upload file to storage
@@ -165,8 +100,8 @@ const ChatBot = () => {
         }
 
         requestBody.file_path = filePath;
-        requestBody.file_name = sanitizedFileName;
-        requestBody.user_message = messageToSend || `Analise este arquivo: ${sanitizedFileName}`;
+        requestBody.file_name = fileToSend.name; // Keep original name
+        requestBody.user_message = messageToSend || `Analise este arquivo: ${fileToSend.name}`;
       }
 
       const { data, error } = await supabase.functions.invoke('chat-with-contract', {

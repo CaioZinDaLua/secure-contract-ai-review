@@ -12,6 +12,7 @@ import PlanBadge from "@/components/PlanBadge";
 import UpgradeModal from "@/components/UpgradeModal";
 import ChatBot from "@/components/ChatBot";
 import SecurityAlert from "@/components/SecurityAlert";
+import { validateFile, sanitizeFileName } from "@/utils/fileUtils";
 
 interface Contract {
   id: string;
@@ -24,73 +25,6 @@ interface UserProfile {
   credits: number;
   plan_type: string;
 }
-
-const validateFile = (file: File): { isValid: boolean; error?: string } => {
-  // Validações de segurança
-  const validations = [
-    {
-      check: () => file.size <= 10 * 1024 * 1024, // 10MB
-      error: "Arquivo muito grande. Máximo permitido: 10MB"
-    },
-    {
-      check: () => file.size > 0,
-      error: "Arquivo está vazio"
-    },
-    {
-      check: () => {
-        const allowedTypes = [
-          'application/pdf',
-          'application/msword',
-          'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-          'image/jpeg',
-          'image/png',
-          'image/jpg',
-          'audio/mpeg',
-          'audio/wav',
-          'audio/webm',
-          'audio/mp4'
-        ];
-        return allowedTypes.includes(file.type);
-      },
-      error: "Tipo de arquivo não permitido. Use PDF, Word, imagens (JPG/PNG) ou áudio (MP3/WAV)"
-    },
-    {
-      check: () => {
-        const allowedExtensions = ['.pdf', '.doc', '.docx', '.jpg', '.jpeg', '.png', '.mp3', '.wav', '.webm', '.mp4'];
-        const fileName = file.name.toLowerCase();
-        return allowedExtensions.some(ext => fileName.endsWith(ext));
-      },
-      error: "Extensão de arquivo não permitida"
-    },
-    {
-      check: () => {
-        // Verificar se o nome do arquivo contém caracteres suspeitos
-        const suspiciousPatterns = [
-          /<script/i,
-          /javascript:/i,
-          /on\w+=/i,
-          /\.\./,
-          /[<>]/
-        ];
-        return !suspiciousPatterns.some(pattern => pattern.test(file.name));
-      },
-      error: "Nome do arquivo contém caracteres não permitidos"
-    },
-    {
-      check: () => file.name.length <= 255,
-      error: "Nome do arquivo muito longo (máximo 255 caracteres)"
-    }
-  ];
-
-  // Executar todas as validações
-  for (const validation of validations) {
-    if (!validation.check()) {
-      return { isValid: false, error: validation.error };
-    }
-  }
-
-  return { isValid: true };
-};
 
 const Dashboard = () => {
   const { user, signOut } = useAuth();
@@ -239,10 +173,11 @@ const Dashboard = () => {
     console.log('Starting file upload...');
 
     try {
-      // Upload file to storage first
-      const fileExt = file.name.split('.').pop();
-      const sanitizedFileName = file.name.replace(/[<>:"/\\|?*]/g, '_');
-      const fileName = `${Date.now()}_${sanitizedFileName}`;
+      // Sanitize and create unique filename
+      const fileExt = file.name.split('.').pop() || '';
+      const baseName = file.name.replace(`.${fileExt}`, '');
+      const sanitizedBaseName = sanitizeFileName(baseName);
+      const fileName = `${Date.now()}_${sanitizedBaseName}.${fileExt.toLowerCase()}`;
       const filePath = `${user!.id}/${fileName}`;
 
       console.log('Uploading to storage:', filePath);
@@ -259,12 +194,12 @@ const Dashboard = () => {
       }
 
       console.log('File uploaded successfully, creating contract record...');
-      // Create contract record
+      // Create contract record with original filename for display
       const { data: contractData, error: contractError } = await supabase
         .from('contracts')
         .insert({
           user_id: user!.id,
-          file_name: sanitizedFileName,
+          file_name: file.name, // Keep original name for display
           file_path: filePath,
           status: 'pending'
         })
